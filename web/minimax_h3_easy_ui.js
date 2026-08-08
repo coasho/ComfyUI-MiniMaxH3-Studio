@@ -1173,7 +1173,15 @@ function patchGraphToPrompt() {
                 promptNode.inputs[`media_${index + 1}`] = [String(link.source_id), slot];
                 promptNode.inputs[`media_type_${index + 1}`] = String(link.media_type || "image");
             });
-            promptNode.inputs.prompt = buildRuntimePrompt(node, runtimeLinks);
+            // An upstream node wired into `prompt` (e.g. MiniMaxH3StudioScript) wins over
+            // the in-node editor: graphToPrompt already resolved it to ["<id>", slot], and
+            // blindly overwriting that used to silently discard the whole upstream chain.
+            const promptSlot = node.inputs?.find?.((i) => i?.name === "prompt");
+            const promptIsLinked = promptSlot?.link != null
+                && Array.isArray(promptNode.inputs.prompt);
+            if (!promptIsLinked) {
+                promptNode.inputs.prompt = buildRuntimePrompt(node, runtimeLinks);
+            }
             promptNode.inputs.mode = canonicalOption("mode", getWidgetValue(node, "mode", MODE_IMAGE));
             promptNode.inputs.resolution = canonicalOption("resolution", getWidgetValue(node, "resolution", "480P"));
             promptNode.inputs.aspect_ratio = canonicalOption("aspect_ratio", getWidgetValue(node, "aspect_ratio", "16:9"));

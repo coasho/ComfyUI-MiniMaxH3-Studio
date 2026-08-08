@@ -252,8 +252,15 @@ def split_sheet_tags(general: list[str]) -> tuple[list[str], list[str]]:
     return keep, drop
 
 
-def wd14_tags(img, threshold: float = 0.35, char_threshold: float = 0.75) -> dict:
-    """返回 {'general': [...], 'character': [...], 'rating': str}。"""
+def wd14_tags(img, threshold: float = 0.35, char_threshold: float = 0.75,
+              split_sheet: bool = True) -> dict:
+    """
+    返回 {'general': [...], 'character': [...], 'rating': str}。
+
+    split_sheet=False 时不做设定稿版式分离，'general' 就是标注器原样的英文标签、
+    'sheet' 为空。普通的反推要的是这个——分离出来的 'sheet' 是中文，
+    那是给剧本编辑器的「不保留」候选用的，混进英文提示词里就是脏东西。
+    """
     global _wd14
     paths = wd14_paths()
     if not paths:
@@ -301,7 +308,10 @@ def wd14_tags(img, threshold: float = 0.35, char_threshold: float = 0.75) -> dic
             character.append((name.replace("_", " "), p))
     general.sort(key=lambda x: -x[1])
     character.sort(key=lambda x: -x[1])
-    keep, drop = split_sheet_tags([n for n, _ in general])
+    if split_sheet:
+        keep, drop = split_sheet_tags([n for n, _ in general])
+    else:
+        keep, drop = [n for n, _ in general], []
     return {
         "general": keep,
         "sheet": drop,

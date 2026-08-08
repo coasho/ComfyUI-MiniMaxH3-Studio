@@ -96,6 +96,7 @@ python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --requir
 |---|---|---|
 | `MiniMax_H3_Studio_Reference.json` | 参考生视频 | `h3_ref2va` + 文本编码器 + VAE + Turbo LoRA |
 | `MiniMax_H3_Studio_TextToVideo.json` | 文生视频 | `h3_fl2va` + 文本编码器 + VAE + Turbo LoRA |
+| `Image_to_Prompt_Bilingual.json` | 图生文反推，不出视频 | `qwen3vl_caption`（二次元再加 `wd14_tagger`）|
 | `MiniMax_H3_Caption_Bilingual.json` | 图生文反推，不出视频 | `qwen3vl_caption`（二次元再加 `wd14_tagger`）|
 
 两张视频图都预置了一小段演示剧本，打开编辑器看到的是填好的结构而不是空表单，
@@ -265,6 +266,7 @@ WD14 会同时抓到 `multiple views / turnaround / white background / spread ar
 | `nodes.py` | 三个节点：Loader / Easy / Output |
 | `download_models.py` | 模型清单、断点续传下载器、HTTP 路由、命令行 |
 | `caption.py` | 图生文反推与保存时翻译的 HTTP 端点 |
+| `caption_node.py` | 独立的图生文反推节点（自然语言 / 标签 × 中 / 英）|
 | `caption_node.py` | `MiniMax H3 图生文反推` 节点（中英文双输出）|
 | `voice.py` | 音色生成的 HTTP 端点 |
 | `vram.py` | 显存/内存释放，接进 ComfyUI 的 `free_memory` |

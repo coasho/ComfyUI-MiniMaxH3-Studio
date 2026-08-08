@@ -103,6 +103,7 @@ package's own nodes** — no KJNodes, no wavespeed, no patched samplers.
 |---|---|---|
 | `MiniMax_H3_Studio_Reference.json` | reference-to-video | `h3_ref2va` + text encoder + VAEs + Turbo LoRA |
 | `MiniMax_H3_Studio_TextToVideo.json` | text-to-video | `h3_fl2va` + text encoder + VAEs + Turbo LoRA |
+| `Image_to_Prompt_Bilingual.json` | image → prompt, no video | `qwen3vl_caption` (+ `wd14_tagger` for anime) |
 | `MiniMax_H3_Caption_Bilingual.json` | image → text, no video | `qwen3vl_caption` (+ `wd14_tagger` for anime) |
 
 The two video graphs come with a short demo script already loaded, so opening the editor
@@ -285,6 +286,7 @@ levels each** (small/large, slow/fast).
 | `nodes.py` | The three nodes: Loader / Easy / Output |
 | `download_models.py` | Model manifest, resumable downloader, HTTP routes, CLI |
 | `caption.py` | Captioning and save-time translation endpoints |
+| `caption_node.py` | The standalone image-to-prompt node (natural / tags × EN / ZH) |
 | `caption_node.py` | The `MiniMax H3 图生文反推` node (bilingual output) |
 | `voice.py` | Voice generation endpoints |
 | `vram.py` | VRAM/RAM release, wired into ComfyUI's `free_memory` |

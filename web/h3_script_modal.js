@@ -52,7 +52,10 @@ const CSS = `
 .h3m-rail-top{padding:12px 12px 8px;flex:0 0 auto}
 .h3m-rail-list{flex:1;overflow:auto;padding:0 10px 12px}
 .h3m-rail-ft{flex:0 0 auto;padding:10px 12px;border-top:1px solid var(--line)}
+/* 内容列限宽：右栏可以有 970px，但一行塞 110 个汉字没法扫读。
+   限到 62em 左右，剩下的留白比硬撑满一行更好读。 */
 .h3m-pane{flex:1;overflow:auto;padding:18px 22px 28px;min-width:0}
+.h3m-pane>*{max-width:62em}
 .h3m-ft{flex:0 0 auto;border-top:1px solid var(--line);background:var(--bg2);
   padding:11px 18px;display:flex;gap:12px;align-items:center}
 .h3m-nav{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;
@@ -77,6 +80,34 @@ const CSS = `
 .h3m-ins:hover i{display:none}
 .h3m-ins span{display:none;font-size:11px;color:#a8c6ff;white-space:nowrap}
 .h3m-ins:hover span{display:block}
+
+/* 可折叠区块：一次性配置默认收起，标题行给出摘要，不用展开也知道设了什么 */
+.h3m-sec{border:1px solid var(--line);border-radius:9px;margin-bottom:12px;background:var(--bg2)}
+.h3m-sec>summary{list-style:none;cursor:pointer;padding:9px 12px;display:flex;
+  align-items:center;gap:9px;font-size:13px;font-weight:600;user-select:none}
+.h3m-sec>summary::-webkit-details-marker{display:none}
+.h3m-sec>summary::before{content:"▸";color:var(--dim);font-size:11px;transition:transform .12s}
+.h3m-sec[open]>summary::before{transform:rotate(90deg)}
+.h3m-sec>summary:hover{background:var(--bg3);border-radius:8px}
+.h3m-sec>summary .sum{margin-left:auto;font-weight:400;font-size:11.5px;color:var(--dim);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:56%}
+/* details 折叠时必须显式藏掉内容：给 .bd 设了 display 之后，
+   浏览器默认的「非 summary 子元素隐藏」规则就失效了，内容会溢出在外面。 */
+.h3m-sec>.bd{display:none;padding:2px 12px 12px}
+.h3m-sec[open]>.bd{display:block}
+.h3m-cnt{font-weight:400;font-size:11.5px;color:var(--dim);margin-left:6px}
+
+/* 校验问题清单：可点，点了跳到出问题的地方 */
+.h3m-issues{position:absolute;left:14px;right:14px;bottom:52px;max-height:46%;overflow:auto;
+  background:var(--bg2);border:1px solid var(--line);border-radius:10px;z-index:15;
+  box-shadow:0 -8px 26px rgba(0,0,0,.45);padding:6px}
+.h3m-issue{display:flex;gap:9px;align-items:flex-start;padding:7px 10px;border-radius:7px;
+  font-size:12px;line-height:1.6;cursor:pointer}
+.h3m-issue:hover{background:var(--bg3)}
+.h3m-issue .w{color:var(--warn);flex:0 0 auto}
+.h3m-issue .go{margin-left:auto;color:var(--accent);font-size:11px;white-space:nowrap;flex:0 0 auto}
+.h3m-stat{cursor:pointer;user-select:none;border-radius:6px;padding:2px 8px}
+.h3m-stat:hover{background:var(--bg3)}
 
 .h3m-tl{position:relative;height:34px;border-radius:6px;border:1px solid var(--line);
   overflow:hidden;margin:5px 0 4px;user-select:none;background:#191b21}
@@ -219,6 +250,25 @@ function labeled(text, el) {
     return l;
 }
 
+/**
+ * 可折叠区块。一次性配置默认收起，标题行给出摘要——
+ * 不展开也知道设了什么，改文案时不用滚过一堆配置。
+ */
+function section(title, { open = true, summary = "", count = null } = {}) {
+    const d = E("details", "h3m-sec");
+    d.open = open;
+    const s = E("summary");
+    s.append(E("span", null, title));
+    if (count != null) s.append(E("span", "h3m-cnt", count));
+    const sum = E("span", "sum", summary);
+    s.append(sum);
+    const bd = E("div", "bd");
+    d.append(s, bd);
+    d.body = bd;
+    d.setSummary = (t) => { sum.textContent = t; };
+    return d;
+}
+
 function stepper(value, step, min, max, onChange) {
     const w = E("span", "h3m-step");
     const inp = E("input");
@@ -271,6 +321,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     const S = migrateScript(node.properties?.[SCRIPT_PROP]);
     let sel = S.shots.length ? 0 : "cast";
     let lastRemoved = null;          // 「不保留」最近移除的一条，供撤销
+    let issuePanel = null;           // 校验问题清单（Esc 先关它）          // 「不保留」最近移除的一条，供撤销
 
     const mask = E("div", "h3m-mask");
     const box = E("div", "h3m");
@@ -394,7 +445,19 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         // 关掉编辑器 = 反推和音色都用完了，12GB 该还回去
         releaseAuxModels();
     }
-    const onKey = (e) => { if (e.key === "Escape") close(); };
+    const onKey = (e) => {
+        if (e.key === "Escape") {
+            // 问题清单开着时，Esc 先关它，不要直接把编辑器也关了
+            if (issuePanel) { issuePanel.remove(); issuePanel = null; return; }
+            close();
+            return;
+        }
+        // 在文本框里写完直接 Ctrl+Enter 保存，不用摸鼠标去点右下角
+        if ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.key === "s")) {
+            e.preventDefault();
+            ok.click();
+        }
+    };
     window.addEventListener("keydown", onKey);
     teardown.push(() => window.removeEventListener("keydown", onKey));
     mask.addEventListener("mousedown", (e) => { if (e.target === mask) close(); });
@@ -543,11 +606,50 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     }
 
     /* ----------------------------------------------------------- 绘制 */
+    /**
+     * 校验结果要能点开、能跳过去。
+     * 原来只把详情塞在 title 里：悬停才看得见，看见了也不知道在哪一镜。
+     */
+    function toggleIssues(all) {
+        if (issuePanel) { issuePanel.remove(); issuePanel = null; return; }
+        if (!all.length) return;
+        const p = E("div", "h3m-issues");
+        for (const msg of all) {
+            const row = E("div", "h3m-issue");
+            row.append(E("span", "w", "⚠"), E("span", null, msg));
+            // 从文案里认出该跳到哪儿：「镜头 N」跳分镜，「实体/角色」跳实体表
+            const m = /镜头\s*(\d+)/.exec(msg);
+            const target = m ? { kind: "shot", i: +m[1] - 1 }
+                : /实体|角色|音色|参考图/.test(msg) ? { kind: "cast" }
+                : /「[^」]+」还没填|概述|环境音|配乐|不保留/.test(msg) ? { kind: "global" }
+                : null;
+            if (target) {
+                row.append(E("span", "go", target.kind === "shot" ? `→ 镜头 ${m[1]}`
+                                          : target.kind === "cast" ? "→ 实体" : "→ 全局"));
+                row.onclick = () => {
+                    sel = target.kind === "shot" ? Math.min(target.i, S.shots.length - 1)
+                        : target.kind === "cast" ? "cast" : "global";
+                    p.remove(); issuePanel = null;
+                    draw();
+                };
+            } else {
+                row.style.cursor = "default";
+            }
+            p.append(row);
+        }
+        box.style.position = "relative";
+        box.append(p);
+        issuePanel = p;
+    }
+
     function drawStatus() {
         const all = validate(S);
-        stat.textContent = all.length ? `⚠ ${all.length} 个问题` : "✅ 校验通过";
+        stat.textContent = all.length ? `⚠ ${all.length} 个问题　点击查看` : "✅ 校验通过";
+        stat.className = "h3m-mini" + (all.length ? " h3m-stat" : "");
         stat.style.color = all.length ? "var(--warn)" : "var(--ok)";
-        stat.title = all.join("\n");
+        stat.title = all.length ? "点击展开问题清单，可跳转到出问题的地方" : "";
+        stat.onclick = all.length ? () => toggleIssues(all) : null;
+        if (issuePanel) { issuePanel.remove(); issuePanel = null; }
     }
 
     /** 左栏（时间轴 + 导航）。全是不可聚焦的元素，重建不会抢焦点 */
@@ -896,21 +998,27 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             pane.append(card);
         });
 
+        // 六个「+ 某某」平铺是选择过载，而且它们是同一件事的变体。
+        // 收成一个按钮 + 类型选择，默认人物（最常加的那种）。
         const bar = E("div", "h3m-row");
-        for (const k of ENTITY_KINDS) {
-            const b = E("button", "h3m-btn sm", `+ ${k.icon} ${k.label}`);
-            b.title = k.hint;
-            b.onclick = () => { S.entities.push(blankEntity(k.id, "")); draw(); };
-            bar.append(b);
-        }
+        let newKind = "identity";
+        const kindSel = dd(ENTITY_KINDS.map((k) => ({ id: k.id, label: `${k.icon} ${k.label}` })),
+                           newKind, (v) => {
+                               newKind = v;
+                               kindSel.title = ENTITY_KINDS.find((k) => k.id === v)?.hint || "";
+                           });
+        kindSel.title = ENTITY_KINDS[0].hint;
+        const addB = E("button", "h3m-btn pri", "＋ 新增实体");
+        addB.onclick = () => { S.entities.push(blankEntity(newKind, "")); draw(); };
+        bar.append(addB, kindSel);
         pane.append(bar);
     }
 
     /* ------------------------------------------------------- 全局面板 */
     function drawGlobal() {
-        const f00 = E("div", "h3m-fld");
-        f00.append(E("h3", null, "任务类型"));
-        f00.append(E("div", "h3m-hint",
+        const picked = TASK_TYPES.filter((t) => S.taskTypes.includes(t.id)).map((t) => t.label);
+        const f00 = section("任务类型", { open: false, summary: picked.join(" + ") || "未选" });
+        f00.body.append(E("div", "h3m-hint",
             "官方词表，可多选组合。生成时作为 summary 的方括号前缀发送，例如 [reference generation + audio reference]。"));
         const cks = E("div", "h3m-cks");
         for (const t of TASK_TYPES) {
@@ -927,15 +1035,17 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             l.append(cb, body);
             cks.append(l);
         }
-        f00.append(cks);
+        f00.body.append(cks);
         pane.append(f00);
 
-        const f0 = E("div", "h3m-fld");
-        f0.append(E("h3", null, "素材用途"));
-        f0.append(E("div", "h3m-hint",
+        const bound0 = entityBoundMedia(S);
+        const usedN = mediaList.filter((m) => bound0[m.key] || S.media?.[m.key]?.role).length;
+        const f0 = section("素材用途", { open: false,
+            summary: `${mediaList.length} 件素材，已配 ${usedN} 件` });
+        f0.body.append(E("div", "h3m-hint",
             "这里只放不绑实体的用途：首尾帧、配乐、环境音、整轨复用。" +
             "「这张图定义谁长什么样」去实体面板绑。生成时自动编号成 <Picture 1>/<Audio 1>。"));
-        if (!mediaList.length) f0.append(E("div", "h3m-mini", "把 LoadImage / TTS 之类接到节点的 media 口即可。"));
+        if (!mediaList.length) f0.body.append(E("div", "h3m-mini", "把 LoadImage / TTS 之类接到节点的 media 口即可。"));
         const bound = entityBoundMedia(S);
         for (const m of mediaList) {
             const cfg = (S.media[m.key] ||= { kind: m.kind, role: "", retention: "", note: "" });
@@ -970,7 +1080,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
                 note.addEventListener("input", () => { cfg.note = note.value; });
                 r.append(note);
             }
-            f0.append(r);
+            f0.body.append(r);
         }
         pane.append(f0);
 
@@ -985,11 +1095,11 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             pane.append(f);
         }
 
-        const f2 = E("div", "h3m-fld");
-        const h2 = E("h3", null, "不保留的内容");
-        h2.append(E("span", "h3m-mini", `已生效 ${S.notRetained.length} 条`));
-        f2.append(h2);
-        f2.append(E("div", "h3m-hint",
+        const f2 = section("不保留的内容", { open: S.notRetained.length === 0,
+            count: `${S.notRetained.length} 条`,
+            summary: S.notRetained.slice(0, 3).join("、")
+                     + (S.notRetained.length > 3 ? ` 等 ${S.notRetained.length} 条` : "") });
+        f2.body.append(E("div", "h3m-hint",
             "写在这里的东西会告诉模型「参考图上有它，但别搬进成片」。" +
             "用三视图/设定稿当参考时务必写上白底和张臂站姿，否则会被一起画出来。"));
 
@@ -1004,7 +1114,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             c.onclick = () => { S.notRetained.push(t); draw(); };
             pool.append(c);
         }
-        f2.append(pool);
+        f2.body.append(pool);
 
         const row = E("div", "h3m-row");
         const inp = E("input");
@@ -1020,7 +1130,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         add.onclick = doAdd;
         inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doAdd(); } });
         row.append(inp, add);
-        f2.append(row);
+        f2.body.append(row);
 
         const chips = E("div", "h3m-row");
         chips.style.marginTop = "9px";
@@ -1053,7 +1163,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             };
             chips.append(undo);
         }
-        f2.append(chips);
+        f2.body.append(chips);
         pane.append(f2);
     }
 
@@ -1135,17 +1245,30 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             i + 1 < S.shots.length ? "秒　后面的镜头会跟着平移" : "秒　最后一镜，改它等于改总时长"));
         pane.append(lenRow);
 
+        // 六个镜头参数平铺占掉半屏，而它们是「设一次就不太动」的东西。
+        // 收进折叠区，标题行给出当前摘要，不展开也知道设了什么。
+        const camSum = () => [
+            i > 0 && TRANSITIONS.find((x) => x.id === sh.transition)?.label,
+            SHOT_SIZES.find((x) => x.id === sh.size)?.label,
+            CAMERA_ANGLES.find((x) => x.id === sh.angle)?.label,
+            CAMERA_MOTIONS.find((x) => x.id === sh.motion)?.label,
+            CAMERA_AMPLITUDE.find((x) => x.id === sh.amplitude)?.label,
+            CAMERA_SPEED.find((x) => x.id === sh.speed)?.label,
+        ].filter((x) => x && !x.startsWith("（")).join(" · ") || "未设置";
+
+        const cam = section("镜头", { open: false, summary: camSum() });
         const grid = E("div", "h3m-grid");
-        grid.style.marginBottom = "10px";
-        if (i > 0) grid.append(labeled("转场（官方）", dd(TRANSITIONS, sh.transition, (v) => { sh.transition = v; })));
-        grid.append(labeled("景别（非官方）", dd(SHOT_SIZES, sh.size, (v) => { sh.size = v; draw(); })));
-        grid.append(labeled("机位角度（非官方）", dd(CAMERA_ANGLES, sh.angle, (v) => { sh.angle = v; })));
-        grid.append(labeled("运镜（官方）", dd(CAMERA_MOTIONS, sh.motion, (v) => { sh.motion = v; draw(); })));
-        grid.append(labeled("幅度（官方）", dd(CAMERA_AMPLITUDE, sh.amplitude, (v) => { sh.amplitude = v; })));
-        grid.append(labeled("速度（官方）", dd(CAMERA_SPEED, sh.speed, (v) => { sh.speed = v; })));
-        pane.append(grid);
-        pane.append(E("div", "h3m-hint",
+        const bump = (fn) => (v) => { fn(v); cam.setSummary(camSum()); softRefresh(); };
+        if (i > 0) grid.append(labeled("转场", dd(TRANSITIONS, sh.transition, bump((v) => { sh.transition = v; }))));
+        grid.append(labeled("景别 ·非官方", dd(SHOT_SIZES, sh.size, bump((v) => { sh.size = v; }))));
+        grid.append(labeled("机位角度 ·非官方", dd(CAMERA_ANGLES, sh.angle, bump((v) => { sh.angle = v; }))));
+        grid.append(labeled("运镜", dd(CAMERA_MOTIONS, sh.motion, bump((v) => { sh.motion = v; }))));
+        grid.append(labeled("幅度", dd(CAMERA_AMPLITUDE, sh.amplitude, bump((v) => { sh.amplitude = v; }))));
+        grid.append(labeled("速度", dd(CAMERA_SPEED, sh.speed, bump((v) => { sh.speed = v; }))));
+        cam.body.append(grid);
+        cam.body.append(E("div", "h3m-hint",
             "标「非官方」的两项官方无受控词表（也没有「广角」「微距」这类镜头词），会作为普通英文写进描述。"));
+        pane.append(cam);
 
         const f = E("div", "h3m-fld");
         f.append(E("h3", null, "画面描述"));

@@ -638,11 +638,18 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
                 let to = i + (ev.offsetY > n.offsetHeight / 2 ? 1 : 0);
                 if (from < to) to -= 1;
                 if (from === to) return;
-                // 只换顺序，时间点留在原处 —— 时长是时间轴的事，不该被排序带着跑
-                const times = S.shots.map((x) => x.cutAt);
+                // 时长跟着分镜走。一个分镜就是「内容 + 时长」的整体，
+                // 若只换内容，被移动的那镜会捡到目标位置原本的时长——
+                // 那是个跟它无关的数字。
+                const durs = S.shots.map((x, k) => shotEnd(k) - x.cutAt);
+                const [movedDur] = durs.splice(from, 1);
+                durs.splice(to, 0, movedDur);
                 const [moved] = S.shots.splice(from, 1);
                 S.shots.splice(to, 0, moved);
-                S.shots.forEach((x, k) => { x.cutAt = times[k]; });
+                // 起点按新顺序累加重算。各段时长之和恒等于总时长，所以总长不变
+                let t = 0;
+                S.shots.forEach((x, k) => { x.cutAt = +t.toFixed(2); t += durs[k]; });
+                S.shots[0].cutAt = 0;
                 sel = to;
                 draw();
             });

@@ -478,6 +478,17 @@ def build_instruction(kind: str, lang: str, hint: str, tags: dict | None) -> str
             "what you think you see, but ignore any tag that is clearly not about "
             + ("the character" if kind == "identity" else "the subject") + "."
         )
+    # 光靠「不要提这是设定稿」压不住——实测仍然写出了
+    # "standing with arms outstretched in three different poses"。
+    # 标签已经确认了它是设定稿，就把这件事明说，并逐项点名要禁掉什么。
+    if tags and tags.get("sheet"):
+        parts.append(
+            "This image is a character reference sheet: it shows one single character drawn "
+            "several times from different angles, on a blank backdrop, often in a neutral "
+            "arms-out pose. Describe that one character as if you were looking at them once. "
+            "Never mention the multiple views, the number of poses, the turnaround, the "
+            "arm position, the backdrop, or any text and signature on the sheet."
+        )
     if hint and hint.strip():
         parts.append("Additional instruction from the user: " + hint.strip())
     return "\n\n".join(parts)
@@ -661,6 +672,15 @@ def register_routes():
     routes = getattr(PromptServer.instance, "routes", None)
     if routes is None:
         return
+    add_routes(routes)
+
+
+def add_routes(routes):
+    """把路由挂到一张 aiohttp RouteTableDef 上。
+
+    抽出来是为了能在独立进程里挂同一份代码做端到端测试，
+    不必为了验证而重启用户正在用的 ComfyUI。
+    """
     from aiohttp import web
 
     @routes.get("/minimax_h3_studio/caption/status")

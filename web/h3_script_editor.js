@@ -185,6 +185,9 @@ export function entityBoundMedia(script) {
 
 /** v2（角色模型）以及更早的单角色剧本 -> v3 实体模型 */
 export function migrateScript(raw) {
+    // 必须深拷贝：Object.assign 是浅拷贝，notRetained 数组与 media 对象会和
+    // 调用方共享引用，于是弹窗里的改动即使点「取消」也已经写回节点了。
+    try { raw = raw ? structuredClone(raw) : raw; } catch { raw = JSON.parse(JSON.stringify(raw || null)); }
     const s = Object.assign(blankScript(), raw || {});
     s.sections = Object.assign(blankScript().sections, s.sections || {});
     s.taskTypes = Array.isArray(s.taskTypes) ? s.taskTypes : [];

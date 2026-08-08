@@ -1143,9 +1143,17 @@ function scriptMediaTokens(node, runtimeLinks) {
     return map;
 }
 
+/**
+ * 剧本是否「在用」。只填了全局段落、还没加分镜也算——否则用户填完主体定义/画风
+ * 点保存会毫无反应（判据只看 shots.length 时踩过这个坑）。
+ */
 function hasScript(node) {
     const s = node?.properties?.[SCRIPT_PROP];
-    return Boolean(s?.shots?.length);
+    if (!s) return false;
+    if (s.shots?.length) return true;
+    if (Object.values(s.sections || {}).some((v) => String(v || "").trim())) return true;
+    if (s.notRetained?.length) return true;
+    return Object.values(s.media || {}).some((m) => m?.role);
 }
 
 /**
@@ -1166,16 +1174,24 @@ function installScriptEditorButton(node) {
     node.__h3ScriptBtn = true;
     node.properties ||= {};
     node.properties[SCRIPT_PROP] ||= blankScript();
-    const label = () => (hasScript(node)
-        ? `📝 编辑剧本（${node.properties[SCRIPT_PROP].shots.length} 镜）`
-        : "📝 编辑剧本");
+    const label = () => {
+        if (!hasScript(node)) return "📝 编辑剧本";
+        const n = node.properties[SCRIPT_PROP]?.shots?.length || 0;
+        return n ? `📝 编辑剧本（${n} 镜 · 已接管提示词）` : "📝 编辑剧本（已接管提示词）";
+    };
     const w = node.addWidget("button", label(), null, () => {
         openScriptModal(node, scriptMediaList(node), (script) => {
             node.properties[SCRIPT_PROP] = script;
             w.name = label();
-            // 把拼好的提示词回写到 prompt 框，避免「节点上看到的」与「实际发送的」是两回事。
-            // 剧本是唯一真相源，prompt 框是它的只读派生视图。
-            syncPromptFromScript(node);
+            if (hasScript(node)) {
+                // 把拼好的提示词回写到 prompt 框，避免「节点上看到的」与「实际发送的」是两回事。
+                // 剧本是唯一真相源，prompt 框是它的只读派生视图。
+                syncPromptFromScript(node);
+            } else {
+                // 空剧本静默返回过一次，用户以为保存失效；这里说清楚。
+                alert("剧本还是空的，提示词框未改动。\n\n" +
+                      "至少填一项：全局设置里的主体定义/画风/环境音/配乐，或添加一个分镜。");
+            }
             node.setDirtyCanvas?.(true, true);
         });
     });

@@ -368,15 +368,37 @@ def generate_candidates(payload: dict) -> dict:
             "seconds": round(time.time() - t0, 1)}
 
 
+def unique_name(want: str, bank: list, keep_file: str = "") -> str:
+    """
+    音色名必须在库里唯一。
+
+    重名是真会咬人的：库里两条都叫「菲比」，列表、节点标题、实体下拉框全都
+    只显示这个名字，挑的时候只能靠听，绑错了要等出片才发现。同名就自动加序号。
+    """
+    base = str(want or "").strip() or "voice"
+    taken = {str(b.get("name") or "").strip() for b in bank
+             if b.get("file") != keep_file}
+    if base not in taken:
+        return base
+    for n in range(2, 1000):
+        cand = f"{base} {n}"
+        if cand not in taken:
+            return cand
+    return f"{base} {len(bank) + 1}"
+
+
 def save_voice(payload: dict) -> dict:
-    """把选中的那条落盘到 input/h3_voices，返回 LoadAudio 能用的相对路径。"""
+    """把选中的那条落盘到 input/ 根目录，返回 LoadAudio 能用的相对路径。"""
     data_url = payload.get("audio") or ""
     if "," not in data_url:
         raise ValueError("没有音频数据")
     raw = base64.b64decode(data_url.split(",", 1)[1])
-    label = "".join(c for c in str(payload.get("name") or "voice")
-                    if c.isalnum() or c in "-_（）()·")[:24] or "voice"
     digest = hashlib.sha1(raw).hexdigest()[:8]
+
+    bank = load_bank()
+    name = unique_name(payload.get("name") or "voice", bank)
+
+    label = "".join(c for c in name if c.isalnum() or c in "-_（）()·")[:24] or "voice"
     fname = f"{VOICE_PREFIX}{label}_{digest}.wav"
     path = os.path.join(voices_dir(), fname)
     if not os.path.exists(path):
@@ -384,9 +406,8 @@ def save_voice(payload: dict) -> dict:
             f.write(raw)
     rel = fname                            # LoadAudio 的下拉框直接认这个名字
 
-    bank = load_bank()
     entry = {
-        "file": rel, "name": payload.get("name") or label,
+        "file": rel, "name": name,
         "mode": payload.get("mode") or "design",
         "instruction": payload.get("instruction") or "",
         "language": payload.get("language") or "",
@@ -395,7 +416,34 @@ def save_voice(payload: dict) -> dict:
     }
     bank = [b for b in bank if b.get("file") != rel] + [entry]
     save_bank(bank)
-    return {"ok": True, "file": rel, "entry": entry}
+    return {"ok": True, "file": rel, "entry": entry,
+            "renamed": name != str(payload.get("name") or "").strip()}
+
+
+def rename_voice(file: str, name: str) -> dict:
+    bank = load_bank()
+    hit = next((b for b in bank if b.get("file") == file), None)
+    if hit is None:
+        raise ValueError(f"音色库里没有 {file}")
+    hit["name"] = unique_name(name, bank, keep_file=file)
+    save_bank(bank)
+    return {"ok": True, "entry": hit}
+
+
+def delete_voice(file: str, drop_wav: bool = False) -> dict:
+    """
+    从库里移除。默认只摘条目、保留 wav——图里可能还有 LoadAudio 指着它，
+    删了文件那个节点就红了。真要清理磁盘再传 drop_wav。
+    """
+    bank = [b for b in load_bank() if b.get("file") != file]
+    save_bank(bank)
+    removed = False
+    if drop_wav:
+        p = os.path.join(input_dir(), os.path.basename(file))
+        if os.path.isfile(p) and os.path.basename(p).startswith(VOICE_PREFIX):
+            os.remove(p)
+            removed = True
+    return {"ok": True, "removed_wav": removed}
 
 
 # --------------------------------------------------------------- 音色库
@@ -403,17 +451,61 @@ def save_voice(payload: dict) -> dict:
 BANK_PATH_NAME = "minimax_h3_voicebank.json"
 
 
+def user_dir() -> str:
+    """
+    和 input_dir() 同样的道理：`get_user_directory()` 是核心安装目录（C 盘）里
+    那个，跟着 --base-directory 走的 input/ 不在一起。音色库必须和它描述的
+    wav 文件在同一棵树下，否则会出现「D 盘 input 里躺着文件，音色库里看不见」。
+    """
+    base = getattr(folder_paths, "base_path", None)
+    if base:
+        d = os.path.join(base, "user")
+        if os.path.isdir(d):
+            return d
+    return folder_paths.get_user_directory()
+
+
 def _bank_path() -> str:
-    return os.path.join(folder_paths.get_user_directory(), BANK_PATH_NAME)
+    return os.path.join(user_dir(), BANK_PATH_NAME)
 
 
-def load_bank() -> list:
+def _legacy_bank_paths() -> list[str]:
+    """曾经写到核心安装目录去的那份，读取时合并回来，别让用户的音色凭空消失。"""
+    out = []
     try:
-        with open(_bank_path(), "r", encoding="utf-8") as f:
+        p = os.path.join(folder_paths.get_user_directory(), BANK_PATH_NAME)
+        if os.path.abspath(p) != os.path.abspath(_bank_path()):
+            out.append(p)
+    except Exception:
+        pass
+    return out
+
+
+def _read_bank(path: str) -> list:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+def load_bank() -> list:
+    bank = _read_bank(_bank_path())
+    seen = {b.get("file") for b in bank}
+    merged = False
+    for legacy in _legacy_bank_paths():
+        for b in _read_bank(legacy):
+            if b.get("file") and b["file"] not in seen:
+                seen.add(b["file"])
+                bank.append(b)
+                merged = True
+    if merged:
+        # 合并进来的名字可能和现有的撞上，一并去重后落盘，只做这一次
+        for i, b in enumerate(bank):
+            b["name"] = unique_name(b.get("name") or "voice", bank[:i])
+        save_bank(bank)
+    return bank
 
 
 def save_bank(bank: list) -> None:
@@ -422,10 +514,29 @@ def save_bank(bank: list) -> None:
         json.dump(bank, f, ensure_ascii=False, indent=2)
 
 
+def _wav_seconds(path: str) -> float:
+    """用标准库读时长，别为了列个表把 soundfile 拉进来。"""
+    try:
+        import wave
+        with wave.open(path, "rb") as w:
+            return round(w.getnframes() / float(w.getframerate() or 1), 2)
+    except Exception:
+        return 0.0
+
+
 def bank_status() -> dict:
     d = voices_dir()
-    bank = [b for b in load_bank()
-            if os.path.exists(os.path.join(input_dir(), b["file"]))]
+    bank = []
+    for b in load_bank():
+        p = os.path.join(input_dir(), b["file"])
+        if not os.path.exists(p):
+            continue
+        e = dict(b)
+        e["seconds"] = _wav_seconds(p)
+        # 文件名尾巴上那 8 位是内容哈希：同名两条也能一眼看出不是同一条
+        stem = os.path.splitext(os.path.basename(b["file"]))[0]
+        e["id"] = stem.rsplit("_", 1)[-1] if "_" in stem else stem
+        bank.append(e)
     return {
         "backends": [
             {"id": "design", "label": "描述生成（VoiceDesign）", "ready": repo_ready(REPO_DESIGN),
@@ -474,6 +585,24 @@ def add_routes(routes):
         except Exception as exc:
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    @routes.post("/minimax_h3_studio/voice/rename")
+    async def _rename(request):
+        try:
+            p = await request.json()
+            return web.json_response(rename_voice(str(p.get("file") or ""),
+                                                  str(p.get("name") or "")))
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @routes.post("/minimax_h3_studio/voice/delete")
+    async def _delete(request):
+        try:
+            p = await request.json()
+            return web.json_response(delete_voice(str(p.get("file") or ""),
+                                                  bool(p.get("drop_wav"))))
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
     @routes.post("/minimax_h3_studio/voice/unload")
     async def _unload(_r):

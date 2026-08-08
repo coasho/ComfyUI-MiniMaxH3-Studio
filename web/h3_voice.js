@@ -327,11 +327,24 @@ export function openVoiceStudio(opt) {
     }
     probe();
 
+    /**
+     * 音色库列表。
+     *
+     * 只显示名字是不够的：库里出现过两条都叫「菲比」，列表、节点标题、实体下拉框
+     * 全是同一行字，挑的时候只能靠听，绑错了要等出片才发现。所以每行都带上
+     * 时长、seed 和文件哈希，并且可以就地改名/移除。
+     */
     function renderBank(bank) {
         bankList.innerHTML = "";
         if (!bank.length) {
             bankList.append(E("div", "h3v-lab", "音色库还是空的。生成一条并保存后会出现在这里。"));
             return;
+        }
+        const dupes = new Set();
+        const seen = new Set();
+        for (const b of bank) {
+            const n = (b.name || "").trim();
+            if (seen.has(n)) dupes.add(n); else seen.add(n);
         }
         for (const b of bank) {
             const row = E("div", "h3v-bankrow");
@@ -340,13 +353,52 @@ export function openVoiceStudio(opt) {
                 st.picked = { fromBank: true, entry: b };
                 use.disabled = false;
             };
-            row.append(pick, E("span", null, b.name || b.file));
+            const nameIn = E("input");
+            nameIn.value = b.name || b.file;
+            nameIn.style.cssText = "width:120px;flex:none";
+            nameIn.title = b.file;
+            if (dupes.has((b.name || "").trim())) nameIn.style.borderColor = "var(--warn)";
+            const commit = async () => {
+                const v = nameIn.value.trim();
+                if (!v || v === b.name) { nameIn.value = b.name || ""; return; }
+                try {
+                    const d = await post("/rename", { file: b.file, name: v });
+                    b.name = d.entry.name;
+                    nameIn.value = b.name;
+                    if (d.entry.name !== v) msg(`「${v}」已被占用，改成了「${b.name}」`, "ok");
+                    else msg("已改名", "ok");
+                    probe();
+                } catch (e) { msg(e.message, "bad"); nameIn.value = b.name || ""; }
+            };
+            nameIn.addEventListener("blur", commit);
+            nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") nameIn.blur(); });
+
+            const meta = E("span", "h3v-lab",
+                `${b.mode === "clone" ? "克隆" : "描述"}`
+                + (b.seconds ? ` · ${b.seconds}s` : "")
+                + (b.id ? ` · ${b.id}` : ""));
+            meta.title = b.instruction || "";
+            meta.style.flex = "none";
+
             const au = E("audio");
             au.controls = true;
             au.src = `/view?filename=${encodeURIComponent(b.file)}&type=input`;
-            row.append(au);
-            row.append(E("span", "h3v-lab", b.mode === "clone" ? "克隆" : "描述"));
+
+            const del = E("button", "h3v-btn gh sm", "移除");
+            del.title = "只从音色库里移除，wav 文件留在 input/，图里已接的节点不受影响";
+            del.onclick = async () => {
+                try {
+                    await post("/delete", { file: b.file });
+                    msg(`已从音色库移除「${b.name}」`, "ok");
+                    probe();
+                } catch (e) { msg(e.message, "bad"); }
+            };
+
+            row.append(pick, nameIn, au, meta, del);
             bankList.append(row);
+        }
+        if (dupes.size) {
+            msg(`音色库里有重名：${[...dupes].join("、")}。直接在名字框里改掉。`, "bad");
         }
     }
 

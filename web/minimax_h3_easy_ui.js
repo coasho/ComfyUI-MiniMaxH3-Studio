@@ -1257,7 +1257,11 @@ function attachGeneratedVoice(node, entry) {
     if (!file) return "";
     const links = ensureLinks(node);
 
-    const label = entry.name ? `${entry.name}（生成音色）` : file;
+    // 名字后面缀上文件哈希：音色库里出现过两条同名的，画布上两个节点标题
+    // 一模一样、实体下拉框里两行一模一样，只能靠听来分辨
+    const stem = String(file).replace(/\.[^.]+$/, "");
+    const id = stem.includes("_") ? stem.slice(stem.lastIndexOf("_") + 1) : "";
+    const label = entry.name ? `${entry.name}${id ? ` · ${id}` : ""}（生成音色）` : file;
 
     // 同一个文件已经接过就直接复用，别每次都堆一个新节点
     for (const link of links) {
@@ -1275,7 +1279,7 @@ function attachGeneratedVoice(node, entry) {
         return null;
     }
     app.graph.add(loader);
-    loader.title = `音色：${entry.name || file}`;
+    loader.title = `音色：${entry.name || file}${id ? ` · ${id}` : ""}`;
     // 文件是刚写进 input/ 的，下拉框的选项列表是节点定义时快照的，得手动补进去
     const w = loader.widgets?.find?.((x) => x?.name === "audio");
     if (w) {

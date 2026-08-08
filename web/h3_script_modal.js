@@ -23,6 +23,15 @@ import { framingWarning } from "./h3_grammar.js";
 import { openCaptionDialog } from "./h3_caption.js";
 import { openVoiceStudio } from "./h3_voice.js";
 
+/** 「不保留」常用项。与 caption.py 的 SHEET_TAGS 中文值保持一致，
+ *  这样反推自动勾选加进来的和手动点的会去重，不会出现两条一样的。 */
+const NOT_RETAINED_PRESETS = [
+    "参考图的白色背景", "参考图的纯色背景", "三视图/多视角排版", "转身图排版",
+    "设定稿版式", "参考图的张臂姿势", "参考图的 T-pose 站姿", "参考图的全身站位",
+    "直视镜头的姿态", "参考图的侧面视角", "参考图的背面视角", "画师签名", "水印",
+    "图上的角色名文字",
+];
+
 const CSS = `
 .h3m-mask{position:fixed;inset:0;background:rgba(8,9,12,.72);z-index:10000;display:flex;
   align-items:center;justify-content:center;backdrop-filter:blur(3px)}
@@ -121,6 +130,10 @@ const CSS = `
 .h3m-ck.on{background:#25406e;border-color:var(--accent)}
 .h3m-ck input{margin-top:3px}
 .h3m-ck em{font-style:normal;color:var(--dim);font-size:11px;display:block}
+.h3m-pick{display:inline-flex;align-items:center;background:transparent;color:var(--dim);
+  border:1px dashed var(--line);border-radius:22px;padding:3px 11px;font-size:12px;
+  cursor:pointer;user-select:none}
+.h3m-pick:hover{border-color:var(--accent);border-style:solid;color:var(--txt)}
 
 /* 实体卡 */
 .h3m-ent{border:1px solid var(--line);border-radius:10px;padding:12px 13px;margin-bottom:11px;background:var(--bg2)}
@@ -231,6 +244,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     ensureStyle();
     const S = migrateScript(node.properties?.[SCRIPT_PROP]);
     let sel = S.shots.length ? 0 : "cast";
+    let lastRemoved = null;          // 「不保留」最近移除的一条，供撤销
 
     const mask = E("div", "h3m-mask");
     const box = E("div", "h3m");
@@ -465,7 +479,15 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     }
 
     /* ----------------------------------------------------------- 绘制 */
-    function draw() {
+    function drawStatus() {
+        const all = validate(S);
+        stat.textContent = all.length ? `⚠ ${all.length} 个问题` : "✅ 校验通过";
+        stat.style.color = all.length ? "var(--warn)" : "var(--ok)";
+        stat.title = all.join("\n");
+    }
+
+    /** 左栏（时间轴 + 导航）。全是不可聚焦的元素，重建不会抢焦点 */
+    function drawRail() {
         railTop.innerHTML = "";
         railTop.append(E("div", "h3m-lab", "时间轴"));
         if (S.shots.length) {
@@ -498,17 +520,41 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             n.onclick = () => { sel = i; draw(); };
             railList.append(n);
         });
+    }
 
+    /** 结构变化时才用它：会重建右栏，输入焦点会丢 */
+    function draw() {
+        softHooks.length = 0;
+        drawRail();
         pane.innerHTML = "";
         if (sel === "cast") drawCast();
         else if (sel === "global") drawGlobal();
         else if (S.shots[sel]) drawShot(S.shots[sel], sel);
         else { sel = "cast"; drawCast(); }
+        drawStatus();
+    }
 
-        const all = validate(S);
-        stat.textContent = all.length ? `⚠ ${all.length} 个问题` : "✅ 校验通过";
-        stat.style.color = all.length ? "var(--warn)" : "var(--ok)";
-        stat.title = all.join("\n");
+    /**
+     * 输入框失焦后只刷新派生显示，绝不重建右栏。
+     *
+     * 原来所有文本控件都挂 change -> draw()。change 在失焦时触发，draw() 把整个
+     * 面板拆了重建，于是「打完字去点别的东西」那一下点击落在已被销毁的元素上
+     * ——用户看到的就是「点了没反应，很卡顿」，实体改名也因此难用。
+     * 派生显示（导航标题、角标、校验计数）由这里就地更新，输入框不动。
+     */
+    const softHooks = [];
+
+    function softRefresh() {
+        for (const fn of softHooks) {
+            try { fn(); } catch { /* 单个角标坏了不该拖垮整次刷新 */ }
+        }
+        drawRail();
+        drawStatus();
+    }
+
+    /** 输入时更新数据 + 轻量刷新；失焦不做任何重建 */
+    function bindText(el, setter) {
+        el.addEventListener("input", () => { setter(el.value); softRefresh(); });
     }
 
     function globalProblems() {
@@ -540,8 +586,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             const nm = E("input", "nm");
             nm.placeholder = `实体 ${i + 1}`; nm.value = e.name || "";
             nm.title = "镜头描述里用 @这个名字 引用它";
-            nm.addEventListener("input", () => { e.name = nm.value; });
-            nm.addEventListener("change", draw);
+            bindText(nm, (v) => { e.name = v; });
             hd2.append(nm);
 
             hd2.append(dd(ENTITY_KINDS.map((x) => ({ id: x.id, label: `${x.icon} ${x.label}` })), e.kind,
@@ -557,6 +602,13 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             const badge = E("span", "h3m-id" + (p.subject || p.speaker ? "" : " none"), castBadge(p));
             badge.title = "生成时实际使用的编号";
             hd2.append(badge);
+            // 编号依赖名字与台词，改名后就地更新角标，不重建卡片（否则输入焦点会丢）
+            softHooks.push(() => {
+                const np = castPlan(S)[e.id];
+                if (!np) return;
+                badge.textContent = castBadge(np);
+                badge.className = "h3m-id" + (np.subject || np.speaker ? "" : " none");
+            });
 
             const vis = E("label");
             vis.style.cssText = "display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--dim)";
@@ -599,8 +651,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
                 : k.id === "style" ? "画风：线条粗细、上色方式、色板、饱和度"
                 : "这是什么、长什么样。也可以在这里 @ 引用其他实体";
             ta.value = e.desc || "";
-            ta.addEventListener("input", () => { e.desc = ta.value; });
-            ta.addEventListener("change", draw);
+            bindText(ta, (v) => { e.desc = v; });
             card.append(ta);
 
             // 素材绑定：一个实体可以被多张图/多段视频分别定义
@@ -785,33 +836,79 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             f.append(E("div", "h3m-hint", s.hint + "　可以用 @名字 引用实体。"));
             const ta = E("textarea");
             ta.value = S.sections[s.key] || "";
-            ta.addEventListener("input", () => { S.sections[s.key] = ta.value; });
-            ta.addEventListener("change", draw);
+            bindText(ta, (v) => { S.sections[s.key] = v; });
             f.append(ta);
             pane.append(f);
         }
 
         const f2 = E("div", "h3m-fld");
-        f2.append(E("h3", null, "不保留的内容"));
+        const h2 = E("h3", null, "不保留的内容");
+        h2.append(E("span", "h3m-mini", `已生效 ${S.notRetained.length} 条`));
+        f2.append(h2);
         f2.append(E("div", "h3m-hint",
-            "用三视图/设定稿当参考时务必写上白底和 T-pose，否则会被一起搬进画面。"));
+            "写在这里的东西会告诉模型「参考图上有它，但别搬进成片」。" +
+            "用三视图/设定稿当参考时务必写上白底和张臂站姿，否则会被一起画出来。"));
+
+        // 常用项直接点着加。原来这里只有一排「点一下就没」的芯片，
+        // 分不清是待添加还是已添加，误删了还找不回来。
+        const pool = E("div", "h3m-row");
+        pool.style.marginBottom = "9px";
+        const remain = NOT_RETAINED_PRESETS.filter((t) => !S.notRetained.includes(t));
+        pool.append(E("span", "h3m-lab", remain.length ? "常用（点击添加）" : "常用项都加过了"));
+        for (const t of remain) {
+            const c = E("span", "h3m-pick", "＋ " + t);
+            c.onclick = () => { S.notRetained.push(t); draw(); };
+            pool.append(c);
+        }
+        f2.append(pool);
+
         const row = E("div", "h3m-row");
         const inp = E("input");
-        inp.placeholder = "例如：参考图的白色背景"; inp.style.flex = "1";
+        inp.placeholder = "自己写一条，回车添加"; inp.style.flex = "1"; inp.style.minWidth = "220px";
         const add = E("button", "h3m-btn", "+ 添加");
-        const doAdd = () => { if (inp.value.trim()) { S.notRetained.push(inp.value.trim()); draw(); } };
+        const doAdd = () => {
+            const v = inp.value.trim();
+            if (!v) return;
+            if (!S.notRetained.includes(v)) S.notRetained.push(v);
+            inp.value = "";
+            draw();
+        };
         add.onclick = doAdd;
-        inp.addEventListener("keydown", (e) => { if (e.key === "Enter") doAdd(); });
+        inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doAdd(); } });
         row.append(inp, add);
         f2.append(row);
+
         const chips = E("div", "h3m-row");
-        chips.style.marginTop = "8px";
+        chips.style.marginTop = "9px";
+        if (!S.notRetained.length) {
+            chips.append(E("span", "h3m-mini", "还没添加任何项。参考图是设定稿的话，上面的常用项至少加白底那条。"));
+        }
         S.notRetained.forEach((t, i) => {
+            // 整块可点会误删，删除只认那个 ✕
             const c = E("span", "h3m-chip on");
-            c.append(E("span", null, t + "　✕"));
-            c.onclick = () => { S.notRetained.splice(i, 1); draw(); };
+            c.style.cursor = "default";
+            c.append(E("span", null, t));
+            const x2 = E("span", null, "✕");
+            x2.style.cssText = "cursor:pointer;padding:0 2px;opacity:.7";
+            x2.title = "移除这条";
+            x2.onclick = (ev) => {
+                ev.stopPropagation();
+                lastRemoved = { text: t, index: i };
+                S.notRetained.splice(i, 1);
+                draw();
+            };
+            c.append(x2);
             chips.append(c);
         });
+        if (lastRemoved) {
+            const undo = E("button", "h3m-btn gh sm", `↩ 撤销移除「${lastRemoved.text}」`);
+            undo.onclick = () => {
+                S.notRetained.splice(lastRemoved.index, 0, lastRemoved.text);
+                lastRemoved = null;
+                draw();
+            };
+            chips.append(undo);
+        }
         f2.append(chips);
         pane.append(f2);
     }
@@ -832,8 +929,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
                 ? (bad.length ? `找不到实体：${bad.map((b) => "@" + b).join("、")}` : resolveRefs(ta.value, S, plan))
                 : "（这里会实时显示 @ 引用解析成 <Subject N> 之后的样子）";
         };
-        ta.addEventListener("input", () => { setText(ta.value); sync(); });
-        ta.addEventListener("change", draw);
+        ta.addEventListener("input", () => { setText(ta.value); sync(); softRefresh(); });
         wrap.append(ta);
 
         if (S.entities.length) {
@@ -1002,8 +1098,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         at.type = "number"; at.step = "0.1"; at.min = "0"; at.style.width = "72px";
         at.placeholder = "秒"; at.value = b.at ?? "";
         at.title = "本镜开始后第几秒发生。留空 = 不指定";
-        at.addEventListener("input", () => { b.at = at.value; });
-        at.addEventListener("change", draw);
+        at.addEventListener("input", () => { b.at = at.value; softRefresh(); });
         row.append(E("span", "h3m-lab", "+"), at, E("span", "h3m-mini", "s"));
         const sp = E("div"); sp.style.flex = "1"; row.append(sp);
         const rm = E("button", "h3m-btn gh sm", "✕");
@@ -1019,13 +1114,17 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             extra.placeholder = "补充一句（可留空），也能 @ 引用实体";
             extra.style.width = "100%";
             extra.value = b.text || "";
-            extra.addEventListener("input", () => { b.text = extra.value; });
-            extra.addEventListener("change", draw);
             wrap.append(extra);
-            const plan = castPlan(S);
-            const s2 = beatSentence(b, S, plan);
+            const s2 = beatSentence(b, S, castPlan(S));
             const prev = E("div", "h3m-prev" + (s2 ? "" : " bad"), s2 || "还缺实体，这条变更不会发送");
             wrap.append(prev);
+            const syncPrev = () => {
+                const t2 = beatSentence(b, S, castPlan(S));
+                prev.className = "h3m-prev" + (t2 ? "" : " bad");
+                prev.textContent = t2 || "还缺实体，这条变更不会发送";
+            };
+            extra.addEventListener("input", () => { b.text = extra.value; syncPrev(); softRefresh(); });
+            softHooks.push(syncPrev);
         }
         wrap.style.marginBottom = "9px";
         return wrap;
@@ -1066,8 +1165,8 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         ta.addEventListener("input", () => {
             ln.text = ta.value;
             cnt.textContent = `${spokenChars(ln.text)} 字 · ${speechSeconds(ln.text).toFixed(1)}s`;
+            softRefresh();
         });
-        ta.addEventListener("change", draw);
         c.append(ta);
 
         const r = E("div", "h3m-row");

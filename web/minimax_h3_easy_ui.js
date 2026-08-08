@@ -1,6 +1,8 @@
 import { app } from "../../scripts/app.js";
 import { openScriptModal } from "./h3_script_modal.js";
-import { assemble, blankScript, SCRIPT_PROP } from "./h3_script_editor.js";
+import { translateLines } from "./h3_caption.js";
+import { assemble, blankScript, SCRIPT_PROP,
+         needsTranslation, applyTranslations } from "./h3_script_editor.js";
 
 const NODE_CLASS = "MiniMaxH3Easy";
 const LOADER_CLASS = "MiniMaxH3EasyLoader";
@@ -1162,16 +1164,35 @@ function hasScript(node) {
 }
 
 /**
- * 剧本 -> prompt 框。剧本存在时它就是唯一真相源，prompt 框只是派生视图，
- * 因此同时清掉富文本 doc，避免旧的 @ 芯片/台词块残留造成两处不一致。
+ * 剧本 -> prompt 框。
+ *
+ * 中文剧本会先整批交给 LLM 译成英文再拼装：H3 的官方语法和示例全是英文，
+ * 中文散文喂进去结果会乱。台词正文不参与翻译，原样保留。
+ * 翻译只发生在这里（保存并应用），因为 assemble() 在排队时也要同步跑，
+ * 那个位置发不了网络请求。
+ *
+ * 剧本本身仍存中文，下次打开继续用中文编辑。
  */
-function syncPromptFromScript(node) {
-    if (!hasScript(node)) return;
-    const text = assemble(node.properties[SCRIPT_PROP], scriptMediaTokens(node, normalizeLinks(node)));
+async function syncPromptFromScript(node, onProgress) {
+    if (!hasScript(node)) return { ok: false };
+    const script = node.properties[SCRIPT_PROP];
+    let out = script;
+    let translated = 0;
+
+    const zh = needsTranslation(script);
+    if (zh.length) {
+        onProgress?.(`正在把 ${zh.length} 段中文交给模型译成英文…`);
+        const map = await translateLines(zh);          // 失败就抛，由调用方报出来
+        out = applyTranslations(script, map);
+        translated = Object.keys(map).length;
+    }
+
+    const text = assemble(out, scriptMediaTokens(node, normalizeLinks(node)));
     const widget = getWidget(node, "prompt");
     if (widget) widget.value = text;
     delete node.properties[PROMPT_DOC_PROP];
     if (node.__h3Editor) renderEditorFromNode(node, true);
+    return { ok: true, translated, total: zh.length };
 }
 
 /**
@@ -1231,7 +1252,7 @@ function installScriptEditorButton(node) {
     };
     const w = node.addWidget("button", label(), null, () => {
         // 返回 true = 关闭弹窗；返回字符串 = 保存没生效，弹窗留着并显示这句话
-        openScriptModal(node, scriptMediaList(node), (script) => {
+        openScriptModal(node, scriptMediaList(node), async (script, onProgress) => {
             node.properties[SCRIPT_PROP] = script;
             w.name = label();
             node.setDirtyCanvas?.(true, true);
@@ -1240,9 +1261,13 @@ function installScriptEditorButton(node) {
                 return "剧本还是空的，提示词框未改动。至少填一项：" +
                        "全局设置里的整体概述 / 画风 / 环境音 / 配乐，或添加一个分镜。";
             }
-            // 把拼好的提示词回写到 prompt 框，避免「节点上看到的」与「实际发送的」是两回事。
-            // 剧本是唯一真相源，prompt 框是它的只读派生视图。
-            syncPromptFromScript(node);
+            try {
+                // 中文剧本在这里译成英文再拼装，回写到 prompt 框
+                await syncPromptFromScript(node, onProgress);
+            } catch (err) {
+                return `翻译失败：${err.message}。提示词框未改动——` +
+                       `要么重启 ComfyUI 让翻译服务起来，要么在弹窗里关掉「译成英文」。`;
+            }
             return true;
         }, (entry) => attachGeneratedVoice(node, entry));
     });
@@ -1317,15 +1342,12 @@ function patchGraphToPrompt() {
             const promptIsLinked = promptSlot?.link != null
                 && Array.isArray(promptNode.inputs.prompt);
             if (!promptIsLinked) {
-                if (hasScript(node)) {
-                    // 剧本只存内容；六段式、时间码、<d> 标签、<Picture N> 编号在这里补全
-                    promptNode.inputs.prompt = assemble(
-                        node.properties[SCRIPT_PROP],
-                        scriptMediaTokens(node, runtimeLinks),
-                    );
-                } else {
-                    promptNode.inputs.prompt = buildRuntimePrompt(node, runtimeLinks);
-                }
+                // 剧本存在时用 prompt 框里的内容 —— 那是「保存并应用」时拼装并
+                // 译成英文的结果。这里不能重新 assemble：翻译要走 LLM，是异步的，
+                // 排队路径同步跑不了，重拼会把英文变回中文。
+                promptNode.inputs.prompt = hasScript(node)
+                    ? String(getWidgetValue(node, "prompt", "") || "")
+                    : buildRuntimePrompt(node, runtimeLinks);
             }
             promptNode.inputs.mode = canonicalOption("mode", getWidgetValue(node, "mode", MODE_IMAGE));
             promptNode.inputs.resolution = canonicalOption("resolution", getWidgetValue(node, "resolution", "480P"));

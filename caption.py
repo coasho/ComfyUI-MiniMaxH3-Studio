@@ -835,6 +835,124 @@ def register_routes():
     add_routes(routes)
 
 
+# --------------------------------------------------------------- 中译英
+
+TRANSLATE_SYS = (
+    "You translate Chinese production notes into English for a video generation model.\n"
+    "Rules:\n"
+    "1. Translate each numbered line separately. Output the same numbering, nothing else.\n"
+    "2. Plain declarative English. Keep it as literal and concrete as the source; "
+    "do not add, embellish, summarise or explain.\n"
+    "3. Tokens like [[1]] are opaque placeholders. Copy them through exactly as they are, "
+    "in the same order. Never translate, renumber, split or drop them.\n"
+    "4. Never output Chinese characters in the translation.\n"
+    # 实测把「三镜教室戏」翻成了 three-mirror classroom scene
+    "5. This is film/animation production shorthand. Read 镜/分镜 as camera shot "
+    "(三镜 = three shots, never 'mirror'), 景别 as shot size, 运镜 as camera move, "
+    "画风 as rendering style, 台词 as dialogue, 留白 as pause, 差分 as variant, "
+    "设定稿/三视图 as character reference sheet, 铺底 as a sustained background layer, "
+    "赛璐璐 as cel shading.\n"
+)
+
+# 实体引用与官方标记绝不能被翻译。实测 @少女 被翻成了 @girl，@ 解析当场就断。
+# 光在指令里说「别动」不管用，发出去之前先换成占位符。
+_PROTECT = re.compile(r"<[^<>]{1,40}>|\(S\d+\)|@[^\s，。、；：！？,.;:!?\"'（）()<>@]+")
+
+
+def _mask(text: str) -> tuple[str, list[str]]:
+    store: list[str] = []
+
+    def sub(m):
+        store.append(m.group(0))
+        return f"[[{len(store)}]]"
+
+    return _PROTECT.sub(sub, text), store
+
+
+def _unmask(text: str, store: list[str]) -> str:
+    return re.sub(r"\[\[\s*(\d+)\s*\]\]",
+                  lambda m: store[int(m.group(1)) - 1]
+                  if 1 <= int(m.group(1)) <= len(store) else m.group(0),
+                  text)
+
+
+def translate_lines(lines: list[str], backend: str = "auto") -> list[str]:
+    """中文散文 -> 英文。逐行对应返回，长度与输入一致。"""
+    items = [str(x or "") for x in lines]
+    todo = [(i, t) for i, t in enumerate(items) if t.strip()]
+    if not todo:
+        return items
+
+    masked, stores = [], []
+    for _, t in todo:
+        m, st = _mask(t.strip())
+        masked.append(m)
+        stores.append(st)
+    numbered = "\n".join(f"{n + 1}. {t}" for n, t in enumerate(masked))
+    prompt = (TRANSLATE_SYS + "\nTranslate these " + str(len(todo)) +
+              " lines:\n" + numbered)
+
+    s = load_settings()
+    backend = pick_backend(backend or s.get("backend") or "auto")
+    if backend == "openai":
+        raw = openai_describe_text(prompt, s)
+    else:
+        if not qwen_ready():
+            raise RuntimeError(f"Qwen3-VL 还没下载到 {QWEN_DIR}")
+        raw = qwen_text(prompt)
+
+    # 按编号回填。模型偶尔会漏行或多话，缺的保留原文而不是错位
+    got: dict[int, str] = {}
+    for line in raw.splitlines():
+        m = re.match(r"\s*(\d+)\s*[.、)]\s*(.+)", line.strip())
+        if m:
+            got[int(m.group(1))] = m.group(2).strip()
+    for n, (idx, src) in enumerate(todo):
+        raw_line = got.get(n + 1)
+        if not raw_line:
+            items[idx] = src                     # 漏行就保留原文，不错位
+            continue
+        out = _unmask(raw_line, stores[n])
+        # 占位符没还回来（被翻译/丢弃/改号）就退回原文——宁可留中文，
+        # 也不能发一段 @ 引用已经断掉的英文。校验会把中文残留报出来。
+        if len(_PROTECT.findall(out)) < len(stores[n]) or "[[" in out:
+            out = src
+        items[idx] = out
+    return items
+
+
+def qwen_text(prompt: str) -> str:
+    """纯文本生成，复用已装载的 Qwen3-VL，不额外占显存。"""
+    import torch
+    model, proc = _load_qwen()
+    msgs = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+    text = proc.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+    inputs = proc(text=[text], return_tensors="pt").to(model.device)
+    with torch.inference_mode():
+        out = model.generate(**inputs, max_new_tokens=1400, do_sample=False)
+    return proc.decode(out[0][inputs.input_ids.shape[1]:], skip_special_tokens=True).strip()
+
+
+def openai_describe_text(prompt: str, s: dict) -> str:
+    import urllib.request
+    base = (s.get("openai_base_url") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("还没配置 OpenAI 兼容接口的 base_url")
+    body = json.dumps({
+        "model": s.get("openai_model") or "",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1600,
+        "temperature": 0,
+    }).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if s.get("openai_api_key"):
+        headers["Authorization"] = "Bearer " + s["openai_api_key"]
+    req = urllib.request.Request(base + "/chat/completions", data=body, headers=headers)
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return (data["choices"][0]["message"]["content"] or "").strip()
+
+
 def add_routes(routes):
     """把路由挂到一张 aiohttp RouteTableDef 上。
 
@@ -867,6 +985,28 @@ def add_routes(routes):
             # 反推是同步重活，丢到线程池，别把 ComfyUI 的事件循环卡住
             result = await loop.run_in_executor(None, run_caption, payload)
             return web.json_response(result)
+        except Exception as exc:
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                                     status=500)
+
+    @routes.post("/minimax_h3_studio/translate")
+    async def _translate(request):
+        import asyncio
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "请求体不是 JSON"}, status=400)
+        lines = payload.get("lines") or []
+        if not isinstance(lines, list):
+            return web.json_response({"ok": False, "error": "lines 必须是数组"}, status=400)
+        loop = asyncio.get_running_loop()
+        try:
+            t0 = time.time()
+            out = await loop.run_in_executor(
+                None, translate_lines, lines, payload.get("backend") or "auto")
+            return web.json_response({"ok": True, "lines": out,
+                                      "seconds": round(time.time() - t0, 1)})
         except Exception as exc:
             traceback.print_exc()
             return web.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"},

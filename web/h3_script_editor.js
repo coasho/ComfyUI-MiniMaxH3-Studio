@@ -63,6 +63,64 @@ export function blankLine(entityId = "") {
     return { text: "", entityId, delivery: "", mode: "onscreen", continuity: "complete" };
 }
 
+/** 需要中译英的散文字段（台词永远不在此列） */
+export function prosePieces(script) {
+    const out = [];
+    const push = (t) => { const v = String(t || "").trim(); if (v) out.push(v); };
+    for (const e of script.entities || []) {
+        push(e.desc);
+        if (e.visible === false) push(e.name);   // 不出镜实体用名字称呼，会进提示词
+        for (const b of e.bindings || []) push(b.note);
+    }
+    for (const sh of script.shots || []) {
+        push(sh.description);
+        for (const b of sh.beats || []) push(b.text);
+        for (const ln of sh.lines || []) push(ln.delivery);   // 语气是导演指令，不是台词
+    }
+    for (const k of ["summary", "overall_soundscape", "non_diegetic_music"]) {
+        push(script.sections?.[k]);
+    }
+    for (const t of script.notRetained || []) push(t);
+    for (const cfg of Object.values(script.media || {})) push(cfg?.note);
+    return [...new Set(out)];
+}
+
+/** 含中日韩字符 = 需要翻译 */
+export const hasCJK = (t) => /[㐀-鿿぀-ヿ가-힯]/.test(String(t || ""));
+
+/**
+ * 把译文写回一份剧本副本。原剧本保持中文，供继续编辑。
+ * map: { 中文原文: English }
+ */
+export function applyTranslations(script, map) {
+    const out = structuredClone(script);
+    const T = (t) => {
+        const v = String(t || "").trim();
+        return (v && map[v]) || t;
+    };
+    for (const e of out.entities || []) {
+        e.desc = T(e.desc);
+        if (e.visible === false) e.name = T(e.name);
+        for (const b of e.bindings || []) b.note = T(b.note);
+    }
+    for (const sh of out.shots || []) {
+        sh.description = T(sh.description);
+        for (const b of sh.beats || []) b.text = T(b.text);
+        for (const ln of sh.lines || []) ln.delivery = T(ln.delivery);   // 台词正文不动
+    }
+    for (const k of ["summary", "overall_soundscape", "non_diegetic_music"]) {
+        if (out.sections) out.sections[k] = T(out.sections[k]);
+    }
+    out.notRetained = (out.notRetained || []).map(T);
+    for (const cfg of Object.values(out.media || {})) if (cfg) cfg.note = T(cfg.note);
+    return out;
+}
+
+/** 需要翻译的中文散文 */
+export function needsTranslation(script) {
+    return prosePieces(script).filter(hasCJK);
+}
+
 export function blankScript() {
     return {
         version: GRAMMAR_VERSION,

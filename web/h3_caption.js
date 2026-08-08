@@ -38,6 +38,24 @@ export async function imageToDataUrl(url) {
     return cv.toDataURL("image/jpeg", 0.9);
 }
 
+/**
+ * 中译英。整批发给 LLM，逐行对应返回。
+ * 台词正文不在 lines 里——调用方负责别把它塞进来。
+ */
+export async function translateLines(lines) {
+    if (!lines.length) return {};
+    const r = await fetch("/minimax_h3_studio/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lines }),
+    });
+    const d = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
+    if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    const map = {};
+    lines.forEach((src, i) => { if (d.lines[i]) map[src] = d.lines[i]; });
+    return map;
+}
+
 async function runCaption(body) {
     const r = await fetch(API, {
         method: "POST",

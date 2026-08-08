@@ -312,9 +312,28 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     const cancel = E("button", "h3m-btn gh", "取消");
     cancel.onclick = () => close();
     const ok = E("button", "h3m-btn pri", "保存并应用");
-    ok.onclick = () => {
-        const r = onSave(structuredClone(S));
-        if (r === true || r == null) close(true); else notify(String(r));
+    ok.onclick = async () => {
+        if (ok.disabled) return;
+        const restore = ok.textContent;
+        ok.disabled = true;
+        cancel.disabled = true;
+        try {
+            // 中文剧本要先交给 LLM 译成英文，这一步会花几秒到几十秒，得给反馈
+            const r = await onSave(structuredClone(S), (msg) => {
+                ok.textContent = "…";
+                stat.textContent = msg;
+                stat.style.color = "var(--accent)";
+            });
+            if (r === true || r == null) { close(true); return; }
+            notify(String(r));
+        } catch (err) {
+            notify(`保存失败：${err.message}`);
+        } finally {
+            ok.disabled = false;
+            cancel.disabled = false;
+            ok.textContent = restore;
+            drawStatus();
+        }
     };
     ft.append(stat, sp1, cancel, ok);
 

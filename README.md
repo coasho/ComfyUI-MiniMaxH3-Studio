@@ -96,17 +96,26 @@ Details that matter in practice:
 
 ## Example workflows
 
-`example_workflows/` contains two graphs that use **only core ComfyUI nodes plus this
-package's three nodes** — no KJNodes, no wavespeed, no patched samplers.
+`example_workflows/` contains three graphs that use **only core ComfyUI nodes plus this
+package's own nodes** — no KJNodes, no wavespeed, no patched samplers.
 
 | File | Mode | Needs |
 |---|---|---|
 | `MiniMax_H3_Studio_Reference.json` | reference-to-video | `h3_ref2va` + text encoder + VAEs + Turbo LoRA |
 | `MiniMax_H3_Studio_TextToVideo.json` | text-to-video | `h3_fl2va` + text encoder + VAEs + Turbo LoRA |
+| `MiniMax_H3_Caption_Bilingual.json` | image → text, no video | `qwen3vl_caption` (+ `wd14_tagger` for anime) |
 
-Both come with a short demo script already loaded, so opening the editor shows a filled-in
-structure rather than a blank form. The reference one points at `input/example.png`, which
-ships with ComfyUI; swap in your own reference sheet.
+The two video graphs come with a short demo script already loaded, so opening the editor
+shows a filled-in structure rather than a blank form. They point at `input/example.png`,
+which ships with ComfyUI; swap in your own reference sheet.
+
+**`MiniMax_H3_Caption_Bilingual.json`** is the standalone captioning graph: one image in,
+four texts out — English (goes into the prompt), Chinese (for you to proofread against),
+WD14 tags, and character-sheet artifacts to drop into "not retained". The Chinese is
+translated *from the English*, not written separately, so the two always say the same
+thing — otherwise you would proofread the Chinese and ship an English that says something
+else. It unloads the 8.3 GB VLM when it finishes; turn `unload_after` off if you are
+running it in a loop.
 
 ---
 
@@ -276,6 +285,7 @@ levels each** (small/large, slow/fast).
 | `nodes.py` | The three nodes: Loader / Easy / Output |
 | `download_models.py` | Model manifest, resumable downloader, HTTP routes, CLI |
 | `caption.py` | Captioning and save-time translation endpoints |
+| `caption_node.py` | The `MiniMax H3 图生文反推` node (bilingual output) |
 | `voice.py` | Voice generation endpoints |
 | `vram.py` | VRAM/RAM release, wired into ComfyUI's `free_memory` |
 | `web/h3_grammar.js` | **The grammar schema — single source of truth.** Extend the grammar here |

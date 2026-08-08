@@ -89,16 +89,23 @@ python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --requir
 
 ## 示例工作流
 
-`example_workflows/` 里两张图，**只用 ComfyUI 核心节点 + 本包的三个节点**——
+`example_workflows/` 里三张图，**只用 ComfyUI 核心节点 + 本包自己的节点**——
 不需要 KJNodes、不需要 wavespeed、不需要任何改过的采样器。
 
 | 文件 | 模式 | 需要 |
 |---|---|---|
 | `MiniMax_H3_Studio_Reference.json` | 参考生视频 | `h3_ref2va` + 文本编码器 + VAE + Turbo LoRA |
 | `MiniMax_H3_Studio_TextToVideo.json` | 文生视频 | `h3_fl2va` + 文本编码器 + VAE + Turbo LoRA |
+| `MiniMax_H3_Caption_Bilingual.json` | 图生文反推，不出视频 | `qwen3vl_caption`（二次元再加 `wd14_tagger`）|
 
-两张都预置了一小段演示剧本，打开编辑器看到的是填好的结构而不是空表单。
-参考版指向 ComfyUI 自带的 `input/example.png`，换成你自己的设定稿即可。
+两张视频图都预置了一小段演示剧本，打开编辑器看到的是填好的结构而不是空表单，
+参考图指向 ComfyUI 自带的 `input/example.png`，换成你自己的设定稿即可。
+
+**`MiniMax_H3_Caption_Bilingual.json`** 是单独的反推图：一张图进去，四份文本出来——
+英文（进提示词）、中文（给你核对）、WD14 标签、设定稿版式特征（丢进「不保留」）。
+中文是**从英文译出来的**、不是分别写两遍：两份必须说的是同一件事，否则你核对中文
+没问题就发货，实际发出去的英文可能说了别的。跑完自动把 8.3GB 的 VLM 放掉，
+要连着批量跑就把 `unload_after` 关掉。
 
 ---
 
@@ -258,6 +265,7 @@ WD14 会同时抓到 `multiple views / turnaround / white background / spread ar
 | `nodes.py` | 三个节点：Loader / Easy / Output |
 | `download_models.py` | 模型清单、断点续传下载器、HTTP 路由、命令行 |
 | `caption.py` | 图生文反推与保存时翻译的 HTTP 端点 |
+| `caption_node.py` | `MiniMax H3 图生文反推` 节点（中英文双输出）|
 | `voice.py` | 音色生成的 HTTP 端点 |
 | `vram.py` | 显存/内存释放，接进 ComfyUI 的 `free_memory` |
 | `web/h3_grammar.js` | **语法 schema，唯一事实来源**。扩展语法只改这里 |

@@ -12,6 +12,16 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3EasyOutput": "MiniMax H3 Easy Output",
 }
 
+# 图生文反推节点。依赖 transformers / onnxruntime，装不上不该拖垮主节点。
+try:
+    from . import caption_node
+    NODE_CLASS_MAPPINGS.update(caption_node.NODE_CLASS_MAPPINGS)
+    NODE_DISPLAY_NAME_MAPPINGS.update(caption_node.NODE_DISPLAY_NAME_MAPPINGS)
+except Exception:  # pragma: no cover
+    import traceback
+    print("[MiniMaxH3-Studio] 反推节点注册失败，其余节点不受影响：")
+    traceback.print_exc()
+
 WEB_DIRECTORY = "./web"
 
 # 图生文反推 / 音色生成的 HTTP 端点。装不上也不该拖垮整个节点包，各自兜住。

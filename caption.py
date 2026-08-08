@@ -33,14 +33,45 @@ import folder_paths
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _CUSTOM_NODES = os.path.dirname(_HERE)
-_MODELS = folder_paths.models_dir
 
+
+def model_roots() -> list[str]:
+    """
+    所有可能放模型的根目录，按优先级。
+
+    不能只信 `folder_paths.models_dir`：这台机器上它被解析到了
+    C:\\Users\\...\\ComfyUI-Shared\\models（一个 1MB 的空骨架），而模型实际在
+    --base-directory 指的 D:\\APP\\EDITOR\\ComfyUI\\models 下。
+    """
+    roots = []
+    for p in (getattr(folder_paths, "base_path", None) and
+              os.path.join(folder_paths.base_path, "models"),
+              getattr(folder_paths, "models_dir", None)):
+        if p and p not in roots:
+            roots.append(p)
+    return roots
+
+
+def find_model_dir(*parts: str) -> str:
+    for root in model_roots():
+        p = os.path.join(root, *parts)
+        if os.path.isdir(p):
+            return p
+    return os.path.join(model_roots()[0], *parts)
+
+
+# 别只用「本文件上一级」推 custom_nodes —— 开发目录里跑就推错了。
+# 把 base_path 下的 custom_nodes 也算上。
 WD14_DIRS = [
-    os.path.join(_CUSTOM_NODES, "comfyui-wd14-tagger", "models"),
-    os.path.join(_MODELS, "wd14_tagger"),
-]
+    os.path.join(d, "comfyui-wd14-tagger", "models")
+    for d in dict.fromkeys(filter(None, [
+        _CUSTOM_NODES,
+        getattr(folder_paths, "base_path", None) and
+        os.path.join(folder_paths.base_path, "custom_nodes"),
+    ]))
+] + [os.path.join(r, "wd14_tagger") for r in model_roots()]
 WD14_NAME = "wd-eva02-large-tagger-v3"
-QWEN_DIR = os.path.join(_MODELS, "LLM", "Qwen3-VL-4B-Instruct")
+QWEN_DIR = find_model_dir("LLM", "Qwen3-VL-4B-Instruct")
 
 SETTINGS_PATH = os.path.join(folder_paths.get_user_directory(), "minimax_h3_caption.json")
 

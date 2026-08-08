@@ -27,8 +27,52 @@ import traceback
 
 import folder_paths
 
-_MODELS = folder_paths.models_dir
-TTS_ROOT = os.path.join(_MODELS, "TTS")
+def model_roots() -> list[str]:
+    """
+    所有可能放模型的根目录，按优先级。
+
+    不能只信 `folder_paths.models_dir`：这台机器上它被解析到了
+    C:\\Users\\...\\ComfyUI-Shared\\models（一个 1MB 的空骨架），而模型实际在
+    --base-directory 指的 D:\\APP\\EDITOR\\ComfyUI\\models 下。之前的测试里我把
+    models_dir 手动设成 D 盘，等于让测试自己通过，运行时才暴露。
+    """
+    roots = []
+    for p in (getattr(folder_paths, "base_path", None) and
+              os.path.join(folder_paths.base_path, "models"),
+              getattr(folder_paths, "models_dir", None)):
+        if p and p not in roots:
+            roots.append(p)
+    return roots
+
+
+def find_model_dir(*parts: str) -> str:
+    """在所有根目录里找这个子路径，找到哪个用哪个；都没有则返回首选路径。"""
+    for root in model_roots():
+        p = os.path.join(root, *parts)
+        if os.path.isdir(p):
+            return p
+    return os.path.join(model_roots()[0], *parts)
+
+
+TTS_ROOT = find_model_dir("TTS")
+
+
+def _register_tts_path() -> None:
+    """
+    把真正装了模型的 TTS 目录插到 folder_paths 的最前面。
+
+    ComfyUI-Qwen3-TTS 用 `get_folder_paths("TTS")[0]` 定位模型，而且只在
+    "TTS" 尚未注册时才添加自己的路径。别的东西先注册了 C 盘那个空目录，
+    它就永远找不到模型。is_default=True 会 insert(0, ...)。
+    """
+    try:
+        if os.path.isdir(TTS_ROOT):
+            folder_paths.add_model_folder_path("TTS", TTS_ROOT, is_default=True)
+    except Exception:
+        traceback.print_exc()
+
+
+_register_tts_path()
 
 REPO_DESIGN = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
 REPO_BASE = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
@@ -111,8 +155,24 @@ def repo_ready(repo: str) -> bool:
     return bool(shards) and all(_safetensors_complete(os.path.join(p, f)) for f in shards)
 
 
+def input_dir() -> str:
+    """
+    ComfyUI 实际读取 LoadAudio 的 input 目录。
+
+    `get_input_directory()` 在这台机器上会跟着 C 盘的共享目录走，而 ComfyUI
+    实际是用 --base-directory 起的（D 盘）。以 base_path 为准，生成的音色
+    才既落在 D 盘、又能被 LoadAudio 的下拉框列出来。
+    """
+    base = getattr(folder_paths, "base_path", None)
+    if base:
+        d = os.path.join(base, "input")
+        if os.path.isdir(d):
+            return d
+    return folder_paths.get_input_directory()
+
+
 def voices_dir() -> str:
-    d = folder_paths.get_input_directory()
+    d = input_dir()
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -340,7 +400,7 @@ def save_bank(bank: list) -> None:
 def bank_status() -> dict:
     d = voices_dir()
     bank = [b for b in load_bank()
-            if os.path.exists(os.path.join(folder_paths.get_input_directory(), b["file"]))]
+            if os.path.exists(os.path.join(input_dir(), b["file"]))]
     return {
         "backends": [
             {"id": "design", "label": "描述生成（VoiceDesign）", "ready": repo_ready(REPO_DESIGN),

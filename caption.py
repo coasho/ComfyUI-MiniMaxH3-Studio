@@ -455,15 +455,18 @@ BASE_EN = (
     "Rules:\n"
     "1. Output exactly one dense paragraph of plain declarative English. "
     "No preamble, no markdown, no bullet lists, no closing remark.\n"
-    "2. EVERY colour word you write must be immediately followed by its own exclusion "
-    "clause naming the single nearest colour it must not drift toward. "
-    "Finished examples of the required shape: 'jet black, NOT dark brown'; "
-    "'crimson, NOT rust'; 'cerulean blue, NOT teal'. "
-    "If you name eight colours you must write eight exclusions — no colour may go bare. "
-    # 用字母占位符（'X, NOT Y'）时模型会把 X 原样抄进输出，实测复现过
-    "Never output the literal letters X or Y; always write real colour words.\n"
-    "3. Exclusions are for colours only. Never attach one to an expression, pose, "
-    "material, garment name or body part.\n"
+    # 颜色排除项一律由 enforce_colour_exclusions() 在本地补，不让模型碰。
+    # 让模型写的两次尝试都失败了：给字母占位符它抄 "X, NOT Y"，给成品例句
+    # 它抄「湖蓝，不是青绿」，而且覆盖率在 0%~62% 之间乱跳。
+    "2. Name colours plainly and precisely (e.g. 'jet black hair', 'pale pink trim'). "
+    "Do NOT write any exclusion, contrast or 'not ...' clause after a colour — "
+    "that is added later by a separate step. Never copy wording from these rules.\n"
+    # 「无裸露肌肤」「no other accessories」这类断言：模型看一张缩图判断不了
+    # 「没有什么」，写错了 H3 会照做——参考图明明是短袖，却被加上袖子。
+    "3b. Describe only what is actually present. NEVER state that something is "
+    "absent, missing, not visible, unadorned, or that there are 'no' items of some "
+    "kind. Do not summarise with phrases like 'no other accessories are visible' or "
+    "'no exposed skin'. The colour exclusion in rule 2 is the only negative form allowed.\n"
     "4. Do not mention the background, the white canvas, the camera, the composition, "
     "or that this is a reference sheet. Do not speculate about story, mood or emotion.\n"
 )
@@ -473,11 +476,15 @@ BASE_ZH = (
     "对象：只描述{scope_zh}，覆盖：{aspects_zh}。\n"
     "规则：\n"
     "1. 只输出一段密实的陈述性中文。不要开场白、不要 markdown、不要分点、不要结尾语。\n"
-    "2. 你写下的每一个颜色词后面都必须紧跟它自己的排除项，点名它最容易漂向的那一个"
-    "邻近色。要求的成品写法：「纯黑，不是深棕」「正红，不是砖红」「湖蓝，不是青绿」。"
-    "点了八个颜色就要写八个排除项，不许有裸露的颜色。"
-    "不要输出 X、Y 之类的占位字母，必须写真实的颜色词。\n"
-    "3. 排除项只用于颜色，不要挂在表情、姿势、材质、衣物名称或身体部位上。\n"
+    # 颜色排除项一律本地补。让模型写试过两次都失败：给占位字母它抄 X，
+    # 给成品例句它把「不是青绿」原样抄进输出，覆盖率还在 0%~62% 之间乱跳。
+    "2. 颜色要写得具体准确（例如「纯黑的头发」「淡粉色滚边」）。"
+    "颜色后面不要写任何排除项、对比或「不是……」的从句——那由后续步骤统一补。"
+    "也不要把本规则里的任何措辞抄进正文。\n"
+    # 「无裸露肌肤」写错了 H3 会照做——参考图明明是短袖，成片却被加上袖子
+    "3b. 只描述画面上真实存在的东西。绝对不要断言什么「没有」「无」「不存在」"
+    "「未见」「不露」「素净无装饰」，也不要用「没有其他配饰」「无裸露肌肤」这类收尾。"
+    "规则 2 的颜色排除项是唯一允许的否定形式。\n"
     "4. 不要提背景、白底、镜头、构图，也不要说这是一张设定稿。不要推测剧情或情绪。\n"
 )
 
@@ -574,6 +581,46 @@ def _excluded_spans(text: str, marker: str) -> list[tuple[int, int]]:
     return spans
 
 
+def strip_orphan_exclusions(text: str, lang: str) -> tuple[str, list[str]]:
+    """
+    删掉没挂在颜色词后面的孤立排除项。
+
+    模型会把规则里的例句原样抄进输出（实测出现过孤零零的「不是青绿」）。
+    判据很简单：排除项前面必须紧跟一个已知颜色词，否则它就是抄来的垃圾。
+    """
+    if not text.strip():
+        return text, []
+    # 分隔符要连分号和句首一起认：抄来的例句常常自成一个从句
+    #（实测漏过「；不是青绿」——原来只匹配逗号前缀）
+    if lang == "zh":
+        rx = re.compile(r"[（(]\s*不是[^）)]{1,12}[）)]"
+                        r"|(?:^|[，,；;])\s*不是[^，,。；;]{1,12}")
+        table = ZH_CONFUSABLE
+        colour_at_end = lambda s: bool(re.search(
+            "(" + "|".join(table) + r")[色]?\s*$", s))
+    else:
+        rx = re.compile(r"\(\s*NOT\b[^)]{1,28}\)"
+                        r"|(?:^|[,，;；])\s*NOT\b[\w\s-]{1,28}", re.I)
+        table = EN_CONFUSABLE
+        colour_at_end = lambda s: bool(re.search(
+            r"\b(" + "|".join(table) + r")\b[\w\s-]{0,12}$", s, re.I))
+
+    out, last, dropped = [], 0, []
+    for m in rx.finditer(text):
+        if colour_at_end(text[max(0, m.start() - 40):m.start()]):
+            continue                      # 正常挂在颜色后面，留着
+        dropped.append(m.group(0).strip())
+        out.append(text[last:m.start()])
+        last = m.end()
+    if not dropped:
+        return text, []
+    out.append(text[last:])
+    s = re.sub(r"\s{2,}", " ", "".join(out))
+    s = re.sub(r"\s+([,，。;；])", r"\1", s)
+    s = re.sub(r"([,，;；])\s*\1+", r"\1", s).strip()
+    return s, dropped
+
+
 def enforce_colour_exclusions(text: str, lang: str) -> tuple[str, int]:
     """
     给每个裸颜色补上排除项。返回 (新文本, 补了几个)。
@@ -614,6 +661,72 @@ def enforce_colour_exclusions(text: str, lang: str) -> tuple[str, int]:
         added += 1
     out.append(text[last:])
     return "".join(out), added
+
+
+# --------------------------------------------------------- 剥离「没有什么」
+
+# 模型总爱用「无裸露肌肤」「no other accessories are visible」这类断言收尾。
+# 它看一张缩到 1024 的设定稿判断不了「没有什么」，写错了 H3 会照做：
+# 参考图明明是短袖，成片却给加上袖子。描述存在的东西可以验证，断言不存在
+# 的东西无法验证，所以一律删掉。
+_ABSENCE_EN = re.compile(
+    r"\b("
+    r"no\s+(?:other|further|additional|visible|exposed|discernible|apparent)\b"
+    r"|no\s+\w+\s+(?:are|is)\s+visible"
+    r"|(?:are|is)\s+not\s+visible"
+    r"|(?:with|and)\s+no\b"
+    r"|without\s+(?:any|visible)\b"
+    r"|there\s+(?:are|is)\s+no\b"
+    r"|nothing\s+(?:else|other)\b"
+    r"|lacks?\s+(?:any|visible)\b"
+    r"|devoid\s+of\b"
+    r"|free\s+of\b"
+    r"|unadorned\b"
+    r"|absent\b"
+    r")", re.I)
+
+_ABSENCE_ZH = re.compile(
+    r"(无[裸其他任别]|无任何|无其[他余]|没有[其别任]|未见|不存在|看不[到见]"
+    r"|无装饰|素净|无多余|无额外|无露出|不露)")
+
+# 颜色排除项的确定形状，只有它才受保护
+_EXCLUSION_SHAPE = re.compile(r"[,，]\s*NOT\b|\(\s*NOT\b|（\s*不是|[,，]\s*不是", re.I)
+
+
+def strip_absence_claims(text: str, lang: str) -> tuple[str, list[str]]:
+    """删掉断言「没有什么」的从句。返回 (新文本, 被删掉的原文列表)。"""
+    if not text.strip():
+        return text, []
+    rx = _ABSENCE_ZH if lang == "zh" else _ABSENCE_EN
+    seps = "，；;," if lang == "zh" else ",;"
+    # 按从句切，保留分隔符以便还原
+    parts, buf = [], ""
+    for ch in text:
+        buf += ch
+        if ch in seps:
+            parts.append(buf)
+            buf = ""
+    if buf:
+        parts.append(buf)
+
+    kept, dropped = [], []
+    for p in parts:
+        body = p.strip().rstrip(seps + " ")
+        # 颜色排除项本身带否定词，绝不能误删。但只能按它的确定形状匹配
+        # （", NOT x" / "(NOT x)" / "（不是x）"）——单看有没有 "not" 会把
+        # "the arms are not visible" 也保护起来，那正是要删的东西。
+        has_exclusion = bool(_EXCLUSION_SHAPE.search(p))
+        if body and not has_exclusion and rx.search(body):
+            dropped.append(body)
+            continue
+        kept.append(p)
+
+    out = "".join(kept).strip()
+    # 收尾标点整理
+    out = re.sub(r"[，,;；]\s*$", "", out).strip()
+    if out and not re.search(r"[.。!！?？]$", out):
+        out += "。" if lang == "zh" else "."
+    return out, dropped
 
 
 # ------------------------------------------------------------- 标签转句子
@@ -673,6 +786,21 @@ def run_caption(payload: dict) -> dict:
         text = qwen_describe(img, build_instruction(kind, lang, hint, tags))
         used.append("qwen3vl")
 
+    # 先剥离「没有什么」的断言，再补颜色排除项 —— 顺序不能反，
+    # 否则剥离时会碰到刚插进去的 NOT 从句。
+    dropped = []
+    if backend != "wd14":
+        # 先清掉模型从规则里抄来的孤立排除项（出现过孤零零的「不是青绿」）
+        text, orphans = strip_orphan_exclusions(text, lang)
+        if orphans:
+            dropped.extend(orphans)
+            used.append(f"删抄来的排除项×{len(orphans)}")
+        if payload.get("strip_absence", True):
+            text, absent = strip_absence_claims(text, lang)
+            if absent:
+                dropped.extend(absent)
+                used.append(f"删无据否定×{len(absent)}")
+
     # 模型漏掉的颜色排除项在这里确定性补齐（可关）
     added = 0
     if backend != "wd14" and payload.get("enforce_colours", True):
@@ -687,6 +815,7 @@ def run_caption(payload: dict) -> dict:
         "tags": tags,
         # 设定稿排版特征 -> 「不保留」候选。不主动写进剧本，由用户勾选。
         "suggest_not_retained": (tags or {}).get("sheet") or [],
+        "dropped_absence": dropped,
         "backend": backend,
         "used": used,
         "seconds": round(time.time() - t0, 1),

@@ -164,7 +164,13 @@ export function openCaptionDialog(opt) {
     colCk.append(colBox, E("span", null, "补全颜色排除项"));
     colCk.title = "H3 要求每个颜色都写明「不许漂向哪个邻近色」，否则黑发会飘成橙发。"
                 + "模型实测只能覆盖 0~62%，勾上则由本地按固定对照表确定性补齐。";
-    ctrl.append(dot, backendSel, langSel, tagCk, colCk);
+    const absCk = E("label");
+    absCk.style.cssText = "display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--dim)";
+    const absBox = E("input"); absBox.type = "checkbox"; absBox.checked = true;
+    absCk.append(absBox, E("span", null, "删掉「没有什么」的断言"));
+    absCk.title = "模型爱用「无裸露肌肤」「no other accessories」收尾。它看一张缩图判断不了"
+                + "「没有什么」，写错了 H3 会照做——参考图明明是短袖，成片却被加上袖子。";
+    ctrl.append(dot, backendSel, langSel, tagCk, colCk, absCk);
     mainCol.append(ctrl);
 
     const hint = E("input");
@@ -295,6 +301,7 @@ export function openCaptionDialog(opt) {
                 image, kind: opt.kind || "identity", hint: hint.value,
                 language: state.language, backend: state.backend,
                 use_tags: tagBox.checked, enforce_colours: colBox.checked,
+                strip_absence: absBox.checked,
             });
             clearInterval(tick);
             ta.value = data.text || "";
@@ -319,7 +326,10 @@ export function openCaptionDialog(opt) {
                     nrBoxes.push([cb, item]);
                 }
             } else nrWrap.style.display = "none";
-            msg(`完成，用了 ${data.seconds}s（${data.used.join(" + ")}）。检查一遍再填进去。`, "ok");
+            const dr = data.dropped_absence || [];
+            msg(`完成，用了 ${data.seconds}s（${data.used.join(" + ")}）。`
+                + (dr.length ? `已删无据否定：${dr.join(" / ")}。` : "")
+                + "检查一遍再填进去。", "ok");
         } catch (e) {
             clearInterval(tick);
             msg(`反推失败：${e.message}`, "bad");

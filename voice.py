@@ -215,9 +215,32 @@ def _start_reaper():
     threading.Thread(target=loop, name="h3-voice-reaper", daemon=True).start()
 
 
+def ensure_progress_context() -> None:
+    """
+    补上进度条钩子要读的属性。
+
+    ComfyUI 的全局进度钩子（main.py hijack_progress）在 prompt_id/node_id 为
+    None 时会去读 server_instance.last_prompt_id / last_node_id，而这两个属性
+    只在排队执行提示词时才被赋值（main.py:364）。Qwen3-TTS 的节点内部用了
+    ProgressBar，我们从 HTTP 路由无头调用它、服务器启动后又还没跑过一次生成，
+    就会 AttributeError: 'PromptServer' object has no attribute 'last_prompt_id'。
+
+    只补属性、不碰全局钩子——把钩子摘掉会连累同时在跑的采样任务的进度条。
+    """
+    try:
+        from server import PromptServer
+        inst = PromptServer.instance
+    except Exception:
+        return
+    for attr in ("last_prompt_id", "last_node_id"):
+        if not hasattr(inst, attr):
+            setattr(inst, attr, None)
+
+
 def _load(repo: str):
     global _touched
     _start_reaper()
+    ensure_progress_context()
     with _lock:
         if repo not in _models:
             if not repo_ready(repo):
@@ -296,6 +319,7 @@ def generate_candidates(payload: dict) -> dict:
     language = payload.get("language") or "Chinese"
     n = max(1, min(MAX_CANDIDATES, int(payload.get("count") or 4)))
     seeds = _seeds(int(payload.get("seed") or 0), n)
+    ensure_progress_context()
 
     t0 = time.time()
     out = []

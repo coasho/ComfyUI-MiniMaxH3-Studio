@@ -24,6 +24,7 @@ import gc
 import io
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -482,6 +483,97 @@ def build_instruction(kind: str, lang: str, hint: str, tags: dict | None) -> str
     return "\n\n".join(parts)
 
 
+# --------------------------------------------------------- 颜色排除项补全
+
+# 4B 模型做不到「每个颜色都带排除项」——实测同一版指令下覆盖率在 0%/25%/62%
+# 之间乱跳，编号硬规则也救不回来。所以让 VLM 只负责看，排除项交给确定性补全。
+# 值都是该颜色最容易被扩散模型漂过去的邻近色。
+EN_CONFUSABLE = {
+    "black": "dark brown", "white": "cream", "cream": "pale yellow",
+    "red": "orange-red", "crimson": "rust", "scarlet": "orange",
+    "pink": "salmon", "rose": "coral", "magenta": "hot pink",
+    "orange": "amber", "amber": "orange", "yellow": "mustard",
+    "gold": "brass", "golden": "brass",
+    "green": "teal", "emerald": "jade", "teal": "sea green",
+    "cyan": "sky blue", "blue": "teal", "cerulean": "teal",
+    "azure": "cyan", "navy": "black", "indigo": "violet",
+    "purple": "magenta", "violet": "periwinkle", "lavender": "lilac",
+    "brown": "auburn", "auburn": "copper", "tan": "beige", "beige": "tan",
+    "grey": "silver", "gray": "silver", "silver": "pale grey",
+    "blonde": "light brown", "blond": "light brown", "ginger": "copper",
+}
+
+ZH_CONFUSABLE = {
+    "黑": "深棕", "白": "米白", "红": "砖红", "粉": "藕荷", "橙": "土黄",
+    "黄": "土黄", "金": "铜", "绿": "青", "青": "蓝绿", "蓝": "青",
+    "紫": "品红", "棕": "红棕", "褐": "棕", "灰": "银", "银": "浅灰",
+}
+
+_EN_COLOUR_RE = re.compile(
+    r"\b(" + "|".join(sorted(EN_CONFUSABLE, key=len, reverse=True)) + r")\b", re.I)
+_ZH_COLOUR_RE = re.compile("(" + "|".join(ZH_CONFUSABLE) + ")色")
+
+
+# 排除项到哪结束。中文用全角标点，拿 ASCII "," 去找会一路找不到、
+# 退化成固定窗口把后半句整个吞掉（实测漏补了后三处）。
+_STOPPERS = ",，;；。.)）\n"
+
+
+def _excluded_spans(text: str, marker: str) -> list[tuple[int, int]]:
+    """已经写在排除项里的区间，别在里面再套一层排除项。"""
+    spans = []
+    for m in re.finditer(marker, text, re.I):
+        end = len(text)
+        for i in range(m.end(), len(text)):
+            if text[i] in _STOPPERS:
+                end = i
+                break
+        spans.append((m.start(), end))
+    return spans
+
+
+def enforce_colour_exclusions(text: str, lang: str) -> tuple[str, int]:
+    """
+    给每个裸颜色补上排除项。返回 (新文本, 补了几个)。
+
+    用括号而不是逗号：中文里「浅棕色，不是红棕长发」会被读成
+    「不是红棕长发」，意思正好反了。括号形式没有这个歧义。
+    """
+    if not text.strip():
+        return text, 0
+    if lang == "zh":
+        rx, table, marker = _ZH_COLOUR_RE, ZH_CONFUSABLE, r"不是"
+        def already(tail):
+            t = tail.lstrip()
+            return t.startswith("（不是") or t.startswith("(不是") or t.startswith("，不是")
+        def clause(word): return f"（不是{table[word]}）"
+        def key(m): return m.group(1)
+    else:
+        rx, table, marker = _EN_COLOUR_RE, EN_CONFUSABLE, r"\bNOT\b"
+        def already(tail):
+            return (re.match(r"[\w\s-]{0,24},\s*NOT\b", tail, re.I) is not None
+                    or re.match(r"\s*\(\s*NOT\b", tail, re.I) is not None)
+        def clause(word): return f" (NOT {table[word.lower()]})"
+        def key(m): return m.group(1).lower()
+
+    skip = _excluded_spans(text, marker)
+    out, last, added = [], 0, 0
+    for m in rx.finditer(text):
+        if any(a <= m.start() < b for a, b in skip):
+            continue
+        if already(text[m.end():m.end() + 40]):
+            continue
+        word = key(m)
+        if word not in table:
+            continue
+        out.append(text[last:m.end()])
+        out.append(clause(word))
+        last = m.end()
+        added += 1
+    out.append(text[last:])
+    return "".join(out), added
+
+
 # ------------------------------------------------------------- 标签转句子
 
 def tags_to_text(tags: dict, kind: str, lang: str) -> str:
@@ -539,9 +631,17 @@ def run_caption(payload: dict) -> dict:
         text = qwen_describe(img, build_instruction(kind, lang, hint, tags))
         used.append("qwen3vl")
 
+    # 模型漏掉的颜色排除项在这里确定性补齐（可关）
+    added = 0
+    if backend != "wd14" and payload.get("enforce_colours", True):
+        text, added = enforce_colour_exclusions(text, lang)
+        if added:
+            used.append(f"补排除项×{added}")
+
     return {
         "ok": True,
         "text": text,
+        "colours_added": added,
         "tags": tags,
         # 设定稿排版特征 -> 「不保留」候选。不主动写进剧本，由用户勾选。
         "suggest_not_retained": (tags or {}).get("sheet") or [],

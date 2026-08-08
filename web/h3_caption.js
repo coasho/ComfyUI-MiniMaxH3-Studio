@@ -158,7 +158,13 @@ export function openCaptionDialog(opt) {
     const tagBox = E("input"); tagBox.type = "checkbox"; tagBox.checked = true;
     tagCk.append(tagBox, E("span", null, "二次元：先用 WD14 抽标签做依据"));
     tagCk.title = "WD14 在发色瞳色服饰这类离散属性上比 VLM 准，抽到的标签会作为事实依据喂给 VLM。写实照片请关掉。";
-    ctrl.append(dot, backendSel, langSel, tagCk);
+    const colCk = E("label");
+    colCk.style.cssText = "display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--dim)";
+    const colBox = E("input"); colBox.type = "checkbox"; colBox.checked = true;
+    colCk.append(colBox, E("span", null, "补全颜色排除项"));
+    colCk.title = "H3 要求每个颜色都写明「不许漂向哪个邻近色」，否则黑发会飘成橙发。"
+                + "模型实测只能覆盖 0~62%，勾上则由本地按固定对照表确定性补齐。";
+    ctrl.append(dot, backendSel, langSel, tagCk, colCk);
     mainCol.append(ctrl);
 
     const hint = E("input");
@@ -288,7 +294,7 @@ export function openCaptionDialog(opt) {
             const data = await runCaption({
                 image, kind: opt.kind || "identity", hint: hint.value,
                 language: state.language, backend: state.backend,
-                use_tags: tagBox.checked,
+                use_tags: tagBox.checked, enforce_colours: colBox.checked,
             });
             clearInterval(tick);
             ta.value = data.text || "";

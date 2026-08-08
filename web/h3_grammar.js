@@ -120,31 +120,85 @@ export const TASK_TYPES = [
       hint: "只借音色/风格，语音仍由模型新生成。指定音色时选这个。" },
 ];
 
+/* ---------------------------------------------------------------- 实体 */
+/**
+ * <Subject N> 能是什么。官方的 visible content type 全集——它从来就不只是「角色」，
+ * 衣服、道具、场景、动作都能各占一个 Subject 编号，并被后面的镜头反复引用。
+ *
+ * phrase/singular 用于官方绑定句：
+ *   The {phrase} of <Subject 1> {is|are} defined by <Picture 1>.
+ * retention 是该类型的官方默认保留等级。
+ */
+export const ENTITY_KINDS = [
+    { id: "identity", label: "人物", icon: "🧑", official: true,
+      phrase: "identity and appearance", singular: false, retention: "fully_preserved",
+      visible: true, canSpeak: true,
+      hint: "会出镜的人。可以有台词、可以绑音色。" },
+    { id: "object", label: "物件 / 服装 / 道具", icon: "🎒", official: true,
+      phrase: "visible object appearance", singular: true, retention: "fully_preserved",
+      visible: true, canSpeak: false,
+      hint: "官方把道具、服装、界面、视觉特效归为同一类。要中途更换的衣服就建成两个物件。" },
+    { id: "scene", label: "场景 / 环境", icon: "🏙", official: true,
+      phrase: "scene and environment", singular: false, retention: "fully_preserved",
+      visible: true, canSpeak: false,
+      hint: "地点与环境。没有人物、只拍景的片子就只建这类实体。" },
+    { id: "action", label: "动作 / 姿态", icon: "🏃", official: true,
+      phrase: "pose and movement", singular: false, retention: "attribute_transfer",
+      visible: true, canSpeak: false,
+      hint: "通常来自参考视频。官方默认 attribute_transfer，必须指定迁移到哪个实体身上。" },
+    { id: "style", label: "画风", icon: "🎨", official: true,
+      phrase: "visual style", singular: true, retention: "weak_reference",
+      visible: false, canSpeak: false,
+      hint: "不占 <Subject N>，作为整片的画风声明发送。" },
+    { id: "voice", label: "画外音 / 旁白", icon: "🎙", official: false,
+      phrase: "", singular: true, retention: "",
+      visible: false, canSpeak: true,
+      hint: "只有声音、不出现在画面里。不占 <Subject N>，用名字称呼。" },
+];
+
+/**
+ * 镜头内的状态变更。预设覆盖常见动作，custom 是逃生口——
+ * 任何「千奇百怪」的变化都可以写自由句，里面照样能 @ 引用实体。
+ * a/t/r = 发起者 / 对象 / 接受者，传进来的已经是 <Subject N> 之类的标签。
+ */
+export const BEAT_KINDS = [
+    { id: "wear",    label: "穿上 / 戴上", needs: ["actor", "target"],
+      en: (a, t) => `${a} puts on ${t}` },
+    { id: "remove",  label: "脱下 / 摘下", needs: ["actor", "target"],
+      en: (a, t) => `${a} takes off ${t}` },
+    { id: "swap",    label: "换成（A 的 X 变 Y）", needs: ["actor", "target", "recipient"],
+      en: (a, t, r) => `${a} changes out of ${t} and into ${r}` },
+    { id: "hold",    label: "拿起 / 持有", needs: ["actor", "target"],
+      en: (a, t) => `${a} picks up and holds ${t}` },
+    { id: "give",    label: "交给", needs: ["actor", "target", "recipient"],
+      en: (a, t, r) => `${a} hands ${t} to ${r}` },
+    { id: "drop",    label: "放下 / 丢下", needs: ["actor", "target"],
+      en: (a, t) => `${a} puts ${t} down` },
+    { id: "reveal",  label: "出现 / 入画", needs: ["actor"],
+      en: (a) => `${a} enters the frame` },
+    { id: "exit",    label: "离开 / 出画", needs: ["actor"],
+      en: (a) => `${a} leaves the frame` },
+    { id: "become",  label: "变成 / 转变为", needs: ["actor", "target"],
+      en: (a, t) => `${a} transforms into ${t}` },
+    { id: "destroy", label: "损坏 / 消失", needs: ["actor"],
+      en: (a) => `${a} is destroyed and disappears` },
+    { id: "custom",  label: "自定义（自己写一句）", needs: [],
+      en: null },
+];
+
 /* -------------------------------------------------------------- 媒体用途 */
 /**
- * 素材用途。标 viaCharacter 的两项不在「素材用途」里选——它们要绑到具体角色上，
- * 由「角色」面板指定，否则多角色时无法区分谁的脸、谁的嗓子。
+ * 不绑实体的素材用途（首尾帧、配乐、整轨复用之类）。
+ * 定义某个实体长什么样 / 是什么动作，走实体的 bindings，不在这里选。
  */
 export const MEDIA_ROLES = {
     image: [
-        { id: "identity", label: "角色形象", retention: "fully_preserved", viaCharacter: true,
-          en: (t) => `${t} defines the character's appearance` },
-        { id: "style", label: "画风参考", retention: "weak_reference",
-          en: (t) => `${t} defines the rendering style: line weight, shading, palette and saturation` },
-        { id: "prop", label: "道具/服装/物件", retention: "partially_preserved",
-          en: (t) => `${t} defines a prop or garment that must appear as shown` },
-        { id: "scene", label: "场景/环境", retention: "partially_preserved",
-          en: (t) => `${t} defines the environment` },
-        { id: "transfer", label: "属性迁移到别的主体", retention: "attribute_transfer",
-          en: (t) => `${t}'s characteristics are transferred to a different subject` },
         { id: "first_frame", label: "首帧", retention: "fully_preserved",
           en: (t) => `${t} is fully referenced at the 0.00-second mark` },
         { id: "last_frame", label: "尾帧", retention: "fully_preserved",
           en: (t) => `${t} is fully referenced at the final frame` },
     ],
     audio: [
-        { id: "timbre", label: "音色（绑定角色）", retention: "reference", viaCharacter: true,
-          en: (t) => `${t} is a voice-timbre reference` },
         { id: "bgm", label: "配乐风格", retention: "reference",
           en: (t) => `${t} defines the style of the non-diegetic music` },
         { id: "ambience", label: "环境音风格", retention: "weak_reference",
@@ -155,16 +209,27 @@ export const MEDIA_ROLES = {
           en: (t) => `${t} is partially copied into the final audio track` },
     ],
     video: [
-        { id: "motion", label: "动作/运动参考", retention: "reference",
-          en: (t) => `${t} defines the motion and timing to imitate` },
-        { id: "style_v", label: "画风参考", retention: "weak_reference",
-          en: (t) => `${t} defines the rendering style` },
         { id: "edit_src", label: "编辑源素材", retention: "partially_preserved",
           en: (t) => `${t} is the editing source` },
         { id: "continue", label: "续写起点", retention: "fully_preserved",
           en: (t) => `${t} is the clip to continue from` },
     ],
 };
+
+/** 音色引用：任何实体都能绑，不限于人（会说话的物件也成立） */
+export const VOICE_ROLE = {
+    retention: "reference",
+    en: (token, label, sid) =>
+        `${token} is the voice-timbre and delivery reference for ${label}` +
+        (sid ? ` (${sid})` : "") + "; do not reuse its source words.",
+};
+
+/** 官方绑定句：The {phrase} of <Subject 1> are defined by <Picture 1>. */
+export function bindingSentence(kind, label, token) {
+    const k = ENTITY_KINDS.find((x) => x.id === kind);
+    if (!k?.phrase) return "";
+    return `The ${k.phrase} of ${label} ${k.singular ? "is" : "are"} defined by ${token}.`;
+}
 
 /* -------------------------------------------------------------- 台词相关 */
 export const VOICE_MODES = [
@@ -202,9 +267,9 @@ export const DELIVERY_PRESETS = [
 /* ---------------------------------------------------------------- 分段 */
 /** 参考模式六段，顺序为官方规定，不可调换 */
 export const SECTIONS_REF = [
-    // 角色外观已改由「角色」面板逐个填写，本段由角色表 + 素材用途整段拼出，不再给输入框
+    // 由实体表整段拼出：<Subject N> 编号、官方绑定句、音色绑定都在这里生成
     { key: "subject_definitions", label: "主体定义", required: true, auto: true,
-      hint: "由「角色」面板与素材用途自动拼装：<Subject N> 编号、音色绑定都在这里生成。" },
+      hint: "由「实体」面板自动拼装：Subject 编号、绑定句、音色绑定全在这里生成。" },
     { key: "summary", label: "整体概述", required: true,
       hint: "一段话讲清整体内容、镜头数、风格基调。官方必需段落。" },
     { key: "retention_analysis", label: "保留声明", required: true, auto: true,
@@ -225,10 +290,10 @@ export const SECTIONS_BASE = [
     { key: "non_diegetic_music", label: "配乐", required: true, hint: "只有观众听得到的音乐。" },
 ];
 
-/** 画风：官方没有独立段落，写进 subject_definitions 或 summary */
+/** 画风：官方没有独立段落。v3 起改由「画风」实体承载，本字段仅供旧剧本迁移读取 */
 export const STYLE_FIELD = {
-    key: "art_style", label: "画风（并入主体定义）", required: false, official: false,
-    hint: "官方没有 art_style 段落，这里填的内容会并入 subject_definitions 一起发送。",
+    key: "art_style", label: "画风（已迁移为实体）", required: false, official: false,
+    hint: "官方没有 art_style 段落。v3 起画风是一个实体，可以绑参考图。",
 };
 
 /* ------------------------------------------------------------ 语速预算 */
@@ -253,7 +318,8 @@ export function cameraSentence(shot) {
 }
 
 export function framingWarning(shot) {
-    if (!shot.lines?.length) return null;
+    // 只有「画内说话」才在乎看不看得见口型；画外音/旁白在远景里完全正常
+    if (!(shot.lines || []).some((l) => l.text?.trim() && l.mode === "onscreen")) return null;
     const size = SHOT_SIZES.find((x) => x.id === shot.size);
     const motion = CAMERA_MOTIONS.find((x) => x.id === shot.motion);
     if (size?.mouthPixels === "tiny") {
@@ -265,4 +331,4 @@ export function framingWarning(shot) {
     return null;
 }
 
-export const GRAMMAR_VERSION = 2;
+export const GRAMMAR_VERSION = 3;

@@ -1,29 +1,32 @@
 /**
- * 剧本编辑弹窗（左右分栏）。
+ * 剧本编辑弹窗（v3：实体模型）。
  *
- * 左栏 = 导航：可拖拽时间轴、全局设置入口、分镜列表（带问题角标）
+ * 左栏 = 可拖时间轴 + 导航（实体 / 全局 / 各分镜）
  * 右栏 = 当前选中项的编辑区
  *
- * 使用者只填内容；分段、时间码、<d> 标签、<Picture N> 编号在生成时由 assemble() 补全。
- * 标「非官方」的字段是本插件的辅助项，官方无对应受控词表，只作为自然语言写进描述。
+ * 使用者只填内容；Subject/Speaker 编号、时间码、<d> 标签、官方绑定句
+ * 在生成时由 assemble() 补全。自由文本里用 @名字 引用实体，下方实时显示解析结果。
  */
 
 import {
-    assemble, validate, blankScript, blankShot, blankLine, blankCharacter, migrateScript,
-    mediaRetention, retentionSet, castPlan, castBadge, castProblems, characterBoundMedia,
-    SCRIPT_PROP,
-    SECTIONS, STYLE_FIELD, MEDIA_ROLES, CAMERA_MOTIONS, CAMERA_AMPLITUDE, CAMERA_SPEED,
+    assemble, validate, entityProblems, beatSentence, resolveRefs, danglingRefs,
+    blankScript, blankShot, blankLine, blankEntity, blankBinding, blankBeat,
+    migrateScript, castPlan, castBadge, bindingRetention, mediaRetention,
+    retentionSet, entityBoundMedia, SCRIPT_PROP,
+    SECTIONS, MEDIA_ROLES, ENTITY_KINDS, BEAT_KINDS,
+    CAMERA_MOTIONS, CAMERA_AMPLITUDE, CAMERA_SPEED,
     SHOT_SIZES, CAMERA_ANGLES, TRANSITIONS, VOICE_MODES, CONTINUITY,
     DELIVERY_PRESETS, LANGUAGES, TASK_TYPES,
+    SPEECH, spokenChars, speechSeconds,
 } from "./h3_script_editor.js";
-import { spokenChars, speechSeconds, SPEECH, framingWarning } from "./h3_grammar.js";
+import { framingWarning } from "./h3_grammar.js";
 
 const CSS = `
 .h3m-mask{position:fixed;inset:0;background:rgba(8,9,12,.72);z-index:10000;display:flex;
   align-items:center;justify-content:center;backdrop-filter:blur(3px)}
 .h3m{--bg:#1e2027;--bg2:#252831;--bg3:#2d313c;--line:#363b47;--txt:#e8eaee;--dim:#8b93a1;
   --accent:#4d8dff;--warn:#ff7a7a;--ok:#67c98a;
-  background:var(--bg);color:var(--txt);width:min(1240px,95vw);height:min(880px,93vh);
+  background:var(--bg);color:var(--txt);width:min(1320px,96vw);height:min(900px,94vh);
   border-radius:14px;display:flex;flex-direction:column;overflow:hidden;
   box-shadow:0 24px 70px rgba(0,0,0,.6);border:1px solid var(--line);
   font:13.5px/1.6 system-ui,"Segoe UI","Microsoft YaHei",sans-serif}
@@ -32,7 +35,7 @@ const CSS = `
   border-bottom:1px solid var(--line);flex:0 0 auto}
 .h3m-hd h2{margin:0;font-size:15px;font-weight:600;letter-spacing:.3px}
 .h3m-main{flex:1;display:flex;min-height:0}
-.h3m-rail{width:252px;flex:0 0 auto;border-right:1px solid var(--line);background:var(--bg2);
+.h3m-rail{width:258px;flex:0 0 auto;border-right:1px solid var(--line);background:var(--bg2);
   display:flex;flex-direction:column;min-height:0}
 .h3m-rail-top{padding:12px 12px 8px;flex:0 0 auto}
 .h3m-rail-list{flex:1;overflow:auto;padding:0 10px 12px}
@@ -50,7 +53,6 @@ const CSS = `
 .h3m-nav .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
 .h3m-nav .b{color:var(--warn);font-size:12px}
 
-/* 时间轴：绝对定位，分界线可拖 */
 .h3m-tl{position:relative;height:34px;border-radius:6px;border:1px solid var(--line);
   overflow:hidden;margin:5px 0 4px;user-select:none;background:#191b21}
 .h3m-seg{position:absolute;top:0;bottom:0;display:grid;place-items:center;font-size:10.5px;
@@ -81,11 +83,13 @@ const CSS = `
 .h3m-btn{background:var(--bg3);border:1px solid var(--line);color:var(--txt);border-radius:7px;
   padding:6px 14px;cursor:pointer;font:inherit}
 .h3m-btn:hover{background:#39404e}
+.h3m-btn:disabled{opacity:.4;cursor:default}
 .h3m-btn.pri{background:var(--accent);border-color:#5c99ff}
 .h3m-btn.pri:hover{filter:brightness(1.1)}
 .h3m-btn.gh{background:transparent;color:var(--dim)}
+.h3m-btn.sm{padding:3px 9px;font-size:12px}
 .h3m-btn.full{width:100%}
-.h3m-step{display:inline-flex;align-items:center;gap:0}
+.h3m-step{display:inline-flex;align-items:center}
 .h3m-step button{width:26px;padding:6px 0;background:var(--bg3);border:1px solid var(--line);
   color:var(--txt);cursor:pointer;font:inherit}
 .h3m-step button:first-child{border-radius:6px 0 0 6px}
@@ -102,7 +106,6 @@ const CSS = `
 .h3m-chip .ic{width:24px;height:24px;border-radius:50%;background:#454b5a;display:grid;place-items:center;font-size:12px}
 .h3m-note{border-radius:8px;padding:9px 12px;font-size:12px;line-height:1.65;margin-bottom:12px}
 .h3m-note.warn{background:#3a2424;border:1px solid #6e3636;color:#ffb8b8}
-.h3m-note.ok{background:#1f3226;border:1px solid #35603f;color:#a5dcb6}
 .h3m-banner{display:flex;gap:10px;align-items:flex-start;background:#3a2f1e;border:1px solid #6e5a2f;
   color:#f0d9a6;padding:9px 14px;font-size:12px;line-height:1.6;flex:0 0 auto}
 .h3m-banner button{margin-left:auto;background:transparent;border:none;color:inherit;cursor:pointer;font:inherit}
@@ -116,14 +119,27 @@ const CSS = `
 .h3m-ck.on{background:#25406e;border-color:var(--accent)}
 .h3m-ck input{margin-top:3px}
 .h3m-ck em{font-style:normal;color:var(--dim);font-size:11px;display:block}
-.h3m-cast{border:1px solid var(--line);border-radius:10px;padding:12px 13px;margin-bottom:11px;background:var(--bg2)}
-.h3m-cast-hd{display:flex;gap:9px;align-items:center;margin-bottom:9px;flex-wrap:wrap}
-.h3m-cast-hd input.nm{width:130px;font-weight:600}
+
+/* 实体卡 */
+.h3m-ent{border:1px solid var(--line);border-radius:10px;padding:12px 13px;margin-bottom:11px;background:var(--bg2)}
+.h3m-ent.dim{opacity:.72}
+.h3m-ent-hd{display:flex;gap:9px;align-items:center;margin-bottom:9px;flex-wrap:wrap}
+.h3m-ent-hd input.nm{width:132px;font-weight:600}
 .h3m-id{font-family:ui-monospace,Consolas,monospace;font-size:11px;background:#233a63;
   border:1px solid #35558f;color:#a8c6ff;border-radius:5px;padding:1px 7px;white-space:nowrap}
 .h3m-id.none{background:#33363f;border-color:#454b5a;color:var(--dim)}
-.h3m-slot{display:flex;flex-direction:column;gap:4px;margin-top:9px}
-.h3m-slot>span{color:var(--dim);font-size:11.5px}
+.h3m-bind{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 9px;margin-top:7px;
+  border:1px dashed var(--line);border-radius:8px}
+.h3m-beat{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;margin-bottom:7px;
+  border:1px solid var(--line);border-radius:8px;background:var(--bg2)}
+.h3m-prev{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:#9fd2b0;
+  background:#1b2620;border:1px solid #2f4a39;border-radius:7px;padding:7px 10px;margin-top:7px;
+  white-space:pre-wrap;word-break:break-word}
+.h3m-prev.bad{color:#ffb8b8;background:#2b1e1e;border-color:#5d3434}
+.h3m-refs{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;align-items:center}
+.h3m-ref{background:#233a63;border:1px solid #35558f;color:#a8c6ff;border-radius:14px;
+  padding:1px 10px;font-size:11.5px;cursor:pointer;user-select:none}
+.h3m-ref:hover{filter:brightness(1.25)}
 `;
 
 let styled = false;
@@ -142,7 +158,7 @@ const E = (tag, cls, txt) => {
     return el;
 };
 
-function dd(opts, value, onChange) {
+function dd(opts, value, onChange, title) {
     const s = E("select");
     for (const o of opts) {
         const op = E("option");
@@ -151,6 +167,7 @@ function dd(opts, value, onChange) {
         s.append(op);
     }
     s.value = value ?? "";
+    if (title) s.title = title;
     s.addEventListener("change", () => onChange(s.value));
     return s;
 }
@@ -161,14 +178,6 @@ function labeled(text, el) {
     return l;
 }
 
-/** 标题右侧的「非官方」角标 */
-function unofficial(title) {
-    const t = E("span", "h3m-tag un", "非官方");
-    t.title = title || "官方没有对应受控词表，这里填的内容会作为普通英文写进描述。";
-    return t;
-}
-
-/** 加减步进数字框，比裸 number input 好点 */
 function stepper(value, step, min, max, onChange) {
     const w = E("span", "h3m-step");
     const inp = E("input");
@@ -184,7 +193,6 @@ function stepper(value, step, min, max, onChange) {
     return w;
 }
 
-/** 可编辑下拉：选预设或自己写 */
 function combo(presets, value, onChange) {
     const wrap = E("span");
     wrap.style.cssText = "display:inline-flex;flex:1;min-width:200px";
@@ -210,13 +218,13 @@ function combo(presets, value, onChange) {
 
 /**
  * onSave(script) 的返回值决定弹窗去留：
- *   true      —— 保存成功，关闭
- *   string    —— 保存没生效，弹窗留着并在顶部显示这句话
+ *   true   —— 保存成功，关闭
+ *   string —— 保存没生效，弹窗留着并在顶部显示这句话
  */
 export function openScriptModal(node, mediaList, onSave) {
     ensureStyle();
     const S = migrateScript(node.properties?.[SCRIPT_PROP]);
-    let sel = S.shots.length ? 0 : "global";     // 当前选中：'global' 或分镜下标
+    let sel = S.shots.length ? 0 : "cast";
 
     const mask = E("div", "h3m-mask");
     const box = E("div", "h3m");
@@ -230,7 +238,6 @@ export function openScriptModal(node, mediaList, onSave) {
     dur.addEventListener("change", () => {
         S.duration = Math.min(20, Math.max(4, parseFloat(dur.value) || 15));
         dur.value = S.duration;
-        // 总时长缩短后把越界的分镜起点收回来
         let limit = S.duration - 0.3;
         for (let i = S.shots.length - 1; i > 0; i--) {
             if (S.shots[i].cutAt > limit) S.shots[i].cutAt = +limit.toFixed(1);
@@ -246,17 +253,14 @@ export function openScriptModal(node, mediaList, onSave) {
     x.onclick = () => close();
     hd.append(x);
 
-    /* ------------------------------------------------------- 提示条（内嵌） */
+    /* --------------------------------------------------------- 内嵌提示条 */
     const banner = E("div", "h3m-banner");
     banner.style.display = "none";
     const bannerTxt = E("div");
     const bannerX = E("button", null, "✕");
     bannerX.onclick = () => { banner.style.display = "none"; };
     banner.append(bannerTxt, bannerX);
-    const notify = (msg) => {
-        bannerTxt.textContent = msg;
-        banner.style.display = "flex";
-    };
+    const notify = (msg) => { bannerTxt.textContent = msg; banner.style.display = "flex"; };
 
     /* ------------------------------------------------------------ 主体 */
     const main = E("div", "h3m-main");
@@ -267,9 +271,8 @@ export function openScriptModal(node, mediaList, onSave) {
     const addBtn = E("button", "h3m-btn full", "+ 新增分镜");
     addBtn.onclick = () => {
         const last = S.shots.at(-1);
-        if (!S.shots.length) {
-            S.shots.push(blankShot(0));
-        } else {
+        if (!S.shots.length) S.shots.push(blankShot(0));
+        else {
             const room = S.duration - last.cutAt;
             if (room < 0.8) { notify("最后一镜到片尾不足 0.8 秒，先拖长总时长或把分界线往左拖。"); return; }
             S.shots.push(blankShot(+(last.cutAt + room / 2).toFixed(1)));
@@ -291,7 +294,6 @@ export function openScriptModal(node, mediaList, onSave) {
     const ok = E("button", "h3m-btn pri", "保存并应用");
     ok.onclick = () => {
         const r = onSave(structuredClone(S));
-        // 保存没生效时留在弹窗里，别让人重填一遍
         if (r === true || r == null) close(true); else notify(String(r));
     };
     ft.append(stat, sp1, cancel, ok);
@@ -302,7 +304,6 @@ export function openScriptModal(node, mediaList, onSave) {
 
     const teardown = [];
     const pristine = JSON.stringify(S);
-    /** 关窗。有未保存改动时先问一句——手滑点到背景就丢一晚上的稿子太亏 */
     function close(force) {
         if (!force && JSON.stringify(S) !== pristine &&
             !confirm("有未保存的改动，确定关闭并丢弃吗？")) return;
@@ -314,27 +315,15 @@ export function openScriptModal(node, mediaList, onSave) {
     teardown.push(() => window.removeEventListener("keydown", onKey));
     mask.addEventListener("mousedown", (e) => { if (e.target === mask) close(); });
 
-    /* ------------------------------------------------------- 素材选择器 */
-    function picker(selected, toggle, kinds) {
-        const w = E("div", "h3m-row");
-        const list = mediaList.filter((m) => kinds.includes(m.kind));
-        if (!list.length) {
-            w.append(E("span", "h3m-mini", "还没有素材连到节点的 media 口"));
-            return w;
-        }
-        for (const m of list) {
-            const c = E("span", "h3m-chip" + (selected.includes(m.key) ? " on" : ""));
-            if (m.previewUrl && m.kind === "image") {
-                const i = E("img"); i.src = m.previewUrl; c.append(i);
-            } else c.append(E("span", "ic", m.kind === "audio" ? "♪" : m.kind === "video" ? "▶" : "🖼"));
-            c.append(E("span", null, m.label));
-            c.onclick = () => { toggle(m.key); draw(); };
-            w.append(c);
-        }
-        return w;
-    }
-
+    /* ------------------------------------------------------------ 工具 */
     const shotEnd = (i) => (i + 1 < S.shots.length ? S.shots[i + 1].cutAt : S.duration);
+    const MIN_SHOT = 0.3;
+    const entName = (e, i) => e.name?.trim() || `实体 ${i + 1}`;
+    const entOptions = (extra) => [
+        ...(extra ? [{ id: "", label: extra }] : []),
+        ...S.entities.map((e, i) => ({ id: e.id, label: `${kindOf(e).icon} ${entName(e, i)}` })),
+    ];
+    const kindOf = (e) => ENTITY_KINDS.find((k) => k.id === e.kind) || ENTITY_KINDS[0];
 
     function shotProblems(i) {
         const sh = S.shots[i];
@@ -345,26 +334,23 @@ export function openScriptModal(node, mediaList, onSave) {
         if (need > span) out.push(`台词需 ${need.toFixed(1)}s，本镜只有 ${span.toFixed(1)}s`);
         const fw = framingWarning(sh);
         if (fw) out.push(fw);
-        if (!sh.description?.trim()) out.push("还没有画面描述");
+        if (!sh.description?.trim() && !sh.beats.length) out.push("既没有画面描述也没有变更");
+        for (const t of [sh.description, ...sh.beats.map((b) => b.text)]) {
+            for (const bad of danglingRefs(t, S)) out.push(`引用了不存在的实体「@${bad}」`);
+        }
         return out;
     }
 
-    const MIN_SHOT = 0.3;
-
-    /**
-     * 改某镜时长：后面所有镜整体平移（涟漪）。总时长不够就顶到片尾。
-     */
     function setShotLength(i, len) {
         const cur = shotEnd(i) - S.shots[i].cutAt;
         let delta = len - cur;
-        if (i + 1 >= S.shots.length) {              // 最后一镜：改的是总时长
+        if (i + 1 >= S.shots.length) {
             S.duration = Math.min(20, Math.max(S.shots[i].cutAt + MIN_SHOT, S.shots[i].cutAt + len));
             dur.value = S.duration;
             return;
         }
         const tailLen = S.duration - S.shots.at(-1).cutAt;
-        const maxDelta = tailLen - MIN_SHOT;        // 别把最后一镜挤没
-        delta = Math.min(delta, maxDelta);
+        delta = Math.min(delta, tailLen - MIN_SHOT);
         delta = Math.max(delta, MIN_SHOT - cur);
         for (let k = i + 1; k < S.shots.length; k++) {
             S.shots[k].cutAt = +(S.shots[k].cutAt + delta).toFixed(1);
@@ -372,7 +358,6 @@ export function openScriptModal(node, mediaList, onSave) {
     }
 
     /* ------------------------------------------------------ 可拖拽时间轴 */
-    // draw() 每次重建时间轴。旧的 window 监听必须先摘掉，否则重绘几十次就挂几十个。
     let dropTimelineHooks = null;
     teardown.push(() => dropTimelineHooks?.());
 
@@ -381,26 +366,22 @@ export function openScriptModal(node, mediaList, onSave) {
         const tl = E("div", "h3m-tl");
         const pct = (t) => (t / S.duration) * 100;
         const segs = [], grips = [];
-
         S.shots.forEach((sh, i) => {
             const d = E("div", "h3m-seg" + (sel === i ? " on" : ""), String(i + 1));
             d.style.background = shotProblems(i).length ? "#5c3030" : (i % 2 ? "#333b4a" : "#3c4557");
             d.onclick = () => { sel = i; draw(); };
-            segs.push(d);
-            tl.append(d);
+            segs.push(d); tl.append(d);
         });
         for (let k = 1; k < S.shots.length; k++) {
             const g = E("div", "h3m-grip");
             g.dataset.idx = String(k);
             g.title = "拖动改变前后两镜的分界点";
-            grips.push(g);
-            tl.append(g);
+            grips.push(g); tl.append(g);
         }
         const bub = E("div", "h3m-bub");
         bub.style.display = "none";
         tl.append(bub);
 
-        /** 把当前 cutAt 刷到 DOM 上，不重建元素——拖动时每帧都要跑 */
         const layout = () => {
             segs.forEach((d, i) => {
                 d.style.left = pct(S.shots[i].cutAt) + "%";
@@ -416,8 +397,7 @@ export function openScriptModal(node, mediaList, onSave) {
             const g = e.target.closest?.(".h3m-grip");
             if (!g) return;
             e.preventDefault();
-            const idx = +g.dataset.idx;
-            drag = { idx, g, rect: tl.getBoundingClientRect() };
+            drag = { idx: +g.dataset.idx, g, rect: tl.getBoundingClientRect() };
             g.classList.add("drag");
             document.body.style.cursor = "col-resize";
             bub.style.display = "";
@@ -470,7 +450,6 @@ export function openScriptModal(node, mediaList, onSave) {
 
     /* ----------------------------------------------------------- 绘制 */
     function draw() {
-        // 左栏：时间轴
         railTop.innerHTML = "";
         railTop.append(E("div", "h3m-lab", "时间轴"));
         if (S.shots.length) {
@@ -478,21 +457,22 @@ export function openScriptModal(node, mediaList, onSave) {
             railTop.append(E("div", "h3m-mini", "拖分界线改分镜长度，点色块切到那一镜"));
         } else railTop.append(E("div", "h3m-mini", "尚无分镜"));
 
-        // 左栏：导航
         railList.innerHTML = "";
         const plan = castPlan(S);
-        const cast = E("div", "h3m-nav" + (sel === "cast" ? " on" : ""));
         const speaking = Object.values(plan).filter((p) => p.speaker).length;
-        cast.append(E("span", "n", "👤"),
-                    E("span", "t", `角色（${S.characters.length} 个 · ${speaking} 个有台词）`));
-        if (castProblems(S).length) cast.append(E("span", "b", "●"));
+        const cast = E("div", "h3m-nav" + (sel === "cast" ? " on" : ""));
+        cast.append(E("span", "n", "◍"),
+                    E("span", "t", `实体（${S.entities.length} 个 · ${speaking} 个有台词）`));
+        if (entityProblems(S).length) cast.append(E("span", "b", "●"));
         cast.onclick = () => { sel = "cast"; draw(); };
         railList.append(cast);
+
         const g = E("div", "h3m-nav" + (sel === "global" ? " on" : ""));
         g.append(E("span", "n", "◈"), E("span", "t", "全局设置"));
         if (globalProblems().length) g.append(E("span", "b", "●"));
         g.onclick = () => { sel = "global"; draw(); };
         railList.append(g);
+
         S.shots.forEach((sh, i) => {
             const n = E("div", "h3m-nav" + (sel === i ? " on" : ""));
             n.append(E("span", "n", String(i + 1)));
@@ -503,11 +483,11 @@ export function openScriptModal(node, mediaList, onSave) {
             railList.append(n);
         });
 
-        // 右栏
         pane.innerHTML = "";
         if (sel === "cast") drawCast();
         else if (sel === "global") drawGlobal();
-        else drawShot(S.shots[sel], sel);
+        else if (S.shots[sel]) drawShot(S.shots[sel], sel);
+        else { sel = "cast"; drawCast(); }
 
         const all = validate(S);
         stat.textContent = all.length ? `⚠ ${all.length} 个问题` : "✅ 校验通过";
@@ -516,114 +496,157 @@ export function openScriptModal(node, mediaList, onSave) {
     }
 
     function globalProblems() {
-        const byMedia = Object.values(S.media || {}).some((m) => m?.role);
-        return SECTIONS.filter((s) => {
-            if (!s.required || s.auto || S.sections[s.key]?.trim()) return false;
-            // 主体定义可以完全交给参考图，此时不算缺（与 validate() 同一条规则）
-            return !(s.key === "subject_definitions" && byMedia);
-        });
+        return SECTIONS.filter((s) => s.required && !s.auto && !S.sections[s.key]?.trim());
     }
 
-    /** 角色面板：一个角色一张卡，形象图与音色在卡上直接选 */
+    /* ------------------------------------------------------- 实体面板 */
     function drawCast() {
         const plan = castPlan(S);
-        const probs = castProblems(S);
+        const probs = entityProblems(S);
         if (probs.length) {
             const n = E("div", "h3m-note warn");
             probs.forEach((p) => n.append(E("div", null, "• " + p)));
             pane.append(n);
         }
-        pane.append(E("h3", null, "角色"));
+        pane.append(E("h3", null, "实体"));
         pane.append(E("div", "h3m-hint",
-            "一个角色一张卡，形象图和音色直接在卡上挑。<Subject N> 按角色顺序编号，" +
-            "(S1)(S2) 按谁先开口编号 —— 官方规定这两套号互不相干，卡右上角显示的就是实际会发出去的编号。"));
+            "官方的 <Subject N> 不只是「角色」——人物、衣服、道具、场景、动作都各占一个编号，" +
+            "镜头里再用 @名字 引用它们。要中途换的两件衣服就建成两个物件实体，" +
+            "在分镜的「变更」里写谁在什么时候换成哪件。" +
+            "编号全自动：Subject 按实体顺序，(S1)(S2) 按谁先开口，两套互不相干。"));
 
-        const imgs = mediaList.filter((m) => m.kind === "image");
-        const auds = mediaList.filter((m) => m.kind === "audio");
-        const taken = (key, self) => S.characters.some((c) => c !== self && (c.identityKey === key || c.voiceKey === key));
+        S.entities.forEach((e, i) => {
+            const p = plan[e.id];
+            const k = kindOf(e);
+            const card = E("div", "h3m-ent" + (e.visible === false ? " dim" : ""));
 
-        S.characters.forEach((c, i) => {
-            const p = plan[c.id];
-            const card = E("div", "h3m-cast");
-            const hd2 = E("div", "h3m-cast-hd");
+            const hd2 = E("div", "h3m-ent-hd");
             const nm = E("input", "nm");
-            nm.placeholder = `角色 ${i + 1}`; nm.value = c.name || "";
-            nm.addEventListener("input", () => { c.name = nm.value; });
+            nm.placeholder = `实体 ${i + 1}`; nm.value = e.name || "";
+            nm.title = "镜头描述里用 @这个名字 引用它";
+            nm.addEventListener("input", () => { e.name = nm.value; });
             nm.addEventListener("change", draw);
             hd2.append(nm);
+
+            hd2.append(dd(ENTITY_KINDS.map((x) => ({ id: x.id, label: `${x.icon} ${x.label}` })), e.kind,
+                (v) => {
+                    e.kind = v;
+                    const nk = ENTITY_KINDS.find((x) => x.id === v);
+                    e.visible = nk.visible;
+                    for (const b of e.bindings) if (!b.kind || b.kind === k.id) b.kind = v;
+                    if (!nk.canSpeak) e.voiceKey = "";
+                    draw();
+                }, k.hint));
+
             const badge = E("span", "h3m-id" + (p.subject || p.speaker ? "" : " none"), castBadge(p));
             badge.title = "生成时实际使用的编号";
             hd2.append(badge);
 
-            const onS = E("label");
-            onS.style.cssText = "display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--dim)";
-            const cb = E("input"); cb.type = "checkbox"; cb.checked = c.onScreen !== false;
-            cb.addEventListener("change", () => { c.onScreen = cb.checked; draw(); });
-            onS.append(cb, E("span", null, "出镜"));
-            onS.title = "取消勾选 = 只有声音的旁白，不占 <Subject N> 编号";
-            hd2.append(onS);
+            const vis = E("label");
+            vis.style.cssText = "display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--dim)";
+            const cb = E("input"); cb.type = "checkbox"; cb.checked = e.visible !== false;
+            cb.addEventListener("change", () => { e.visible = cb.checked; draw(); });
+            vis.append(cb, E("span", null, "出现在画面里"));
+            vis.title = "取消勾选 = 不占 <Subject N>（画外音、整片画风）";
+            hd2.append(vis);
 
-            const lang = dd([{ id: "", label: `语言：跟随全局（${S.language}）` },
-                             ...LANGUAGES.map((l) => ({ id: l, label: `语言：${l}` }))],
-                            c.language || "", (v) => { c.language = v; });
-            lang.title = "这个角色的台词用什么语种发送 <d>[Lang]…</d>";
-            hd2.append(lang);
+            if (k.canSpeak) {
+                hd2.append(dd([{ id: "", label: `语言：跟随全局（${S.language}）` },
+                               ...LANGUAGES.map((l) => ({ id: l, label: `语言：${l}` }))],
+                              e.language || "", (v) => { e.language = v; },
+                              "这个实体的台词用什么语种发送 <d>[Lang]…</d>"));
+            }
 
             const sp = E("div"); sp.style.flex = "1"; hd2.append(sp);
-            const up = E("button", "h3m-btn gh", "↑");
+            const up = E("button", "h3m-btn gh sm", "↑");
             up.disabled = i === 0;
             up.title = "上移会改变 <Subject N> 的编号";
-            up.onclick = () => { S.characters.splice(i - 1, 0, S.characters.splice(i, 1)[0]); draw(); };
-            const del = E("button", "h3m-btn gh", "删除");
+            up.onclick = () => { S.entities.splice(i - 1, 0, S.entities.splice(i, 1)[0]); draw(); };
+            const del = E("button", "h3m-btn gh sm", "删除");
             del.onclick = () => {
                 const lines = S.shots.reduce((n2, sh) =>
-                    n2 + sh.lines.filter((l) => l.charId === c.id && l.text?.trim()).length, 0);
-                if (lines && !confirm(`「${c.name || "该角色"}」名下还有 ${lines} 句台词，删除后这些台词会没有说话人。继续？`)) return;
-                S.characters.splice(i, 1);
+                    n2 + sh.lines.filter((l) => l.entityId === e.id && l.text?.trim()).length, 0);
+                const beats = S.shots.reduce((n2, sh) =>
+                    n2 + sh.beats.filter((b) => [b.actor, b.target, b.recipient].includes(e.id)).length, 0);
+                if ((lines || beats) && !confirm(
+                    `「${e.name || "该实体"}」还被 ${lines} 句台词、${beats} 条变更引用，删除后这些引用会失效。继续？`)) return;
+                S.entities.splice(i, 1);
                 draw();
             };
             hd2.append(up, del);
             card.append(hd2);
 
             const ta = E("textarea");
-            ta.style.minHeight = "58px";
-            ta.placeholder = "外观：发型发色、五官、服装、体型。颜色务必写排除项，例如 hair is jet black, NOT orange";
-            ta.value = c.desc || "";
-            ta.addEventListener("input", () => { c.desc = ta.value; });
+            ta.style.minHeight = "54px";
+            ta.placeholder = k.id === "identity"
+                ? "外观：发型发色、五官、服装、体型。颜色务必写排除项，例如 hair is jet black, NOT orange"
+                : k.id === "style" ? "画风：线条粗细、上色方式、色板、饱和度"
+                : "这是什么、长什么样。也可以在这里 @ 引用其他实体";
+            ta.value = e.desc || "";
+            ta.addEventListener("input", () => { e.desc = ta.value; });
             ta.addEventListener("change", draw);
             card.append(ta);
 
-            const slots = E("div", "h3m-grid");
-            slots.style.marginTop = "10px";
-            const mkSlot = (label, list, cur, onPick, emptyHint) => {
-                const s = E("label");
-                s.append(E("span", null, label));
-                if (!list.length) { s.append(E("span", "h3m-mini", emptyHint)); return s; }
-                const opts = [{ id: "", label: "（不指定）" },
-                    ...list.map((m) => ({ id: m.key, label: taken(m.key, c) ? `${m.label}（已被其他角色占用）` : m.label }))];
-                s.append(dd(opts, cur || "", (v) => { onPick(v); draw(); }));
-                return s;
-            };
-            slots.append(mkSlot("形象参考图", imgs, c.identityKey,
-                (v) => { c.identityKey = v; }, "没有图片接到 media 口"));
-            slots.append(mkSlot("音色参考音频", auds, c.voiceKey,
-                (v) => { c.voiceKey = v; }, "没有音频接到 media 口"));
-            card.append(slots);
+            // 素材绑定：一个实体可以被多张图/多段视频分别定义
+            const imgsVids = mediaList.filter((m) => m.kind === "image" || m.kind === "video");
+            (e.bindings || []).forEach((b, j) => {
+                const row = E("div", "h3m-bind");
+                row.append(E("span", "h3m-lab", "由素材定义"));
+                row.append(dd([{ id: "", label: "（选素材）" },
+                               ...imgsVids.map((m) => ({ id: m.key, label: m.label }))],
+                              b.mediaKey, (v) => { b.mediaKey = v; draw(); }));
+                row.append(dd(ENTITY_KINDS.filter((x) => x.phrase).map((x) => ({ id: x.id, label: x.label })),
+                              b.kind, (v) => { b.kind = v; b.retention = ""; draw(); },
+                              "官方绑定句：The {内容类型} of <Subject N> is defined by <Picture M>."));
+                const auto = bindingRetention({ ...b, retention: "" });
+                row.append(dd([{ id: "", label: `保留：${auto}（默认）` },
+                               ...retentionSet("image").map((x) => ({ id: x.id, label: `保留：${x.label}` }))],
+                              b.retention, (v) => { b.retention = v; draw(); }));
+                if (bindingRetention(b) === "attribute_transfer") {
+                    row.append(dd(entOptions("迁移到？（必填）"), b.transferTo,
+                        (v) => { b.transferTo = v; draw(); },
+                        "官方要求 attribute_transfer 必须指定接收方"));
+                }
+                const rm = E("button", "h3m-btn gh sm", "✕");
+                rm.onclick = () => { e.bindings.splice(j, 1); draw(); };
+                row.append(rm);
+                card.append(row);
+            });
 
-            const said = S.shots.reduce((n2, sh) => n2 + sh.lines.filter((l) => l.charId === c.id && l.text?.trim()).length, 0);
-            card.append(E("div", "h3m-mini", said
-                ? `名下 ${said} 句台词` + (p.speaker ? `，说话人编号 (${p.speaker})` : "")
-                : "名下暂无台词，不会分配说话人编号"));
+            const foot = E("div", "h3m-row");
+            foot.style.marginTop = "8px";
+            const addB = E("button", "h3m-btn sm", "+ 绑定素材");
+            addB.disabled = !imgsVids.length;
+            addB.title = imgsVids.length ? "同一实体可以绑多张图（正面 + 侧面 + 服装细节）" : "还没有图片/视频接到 media 口";
+            addB.onclick = () => { e.bindings.push(blankBinding("", e.kind)); draw(); };
+            foot.append(addB);
+
+            if (k.canSpeak) {
+                const auds = mediaList.filter((m) => m.kind === "audio");
+                foot.append(E("span", "h3m-lab", "音色"));
+                foot.append(dd([{ id: "", label: auds.length ? "（不指定）" : "没有音频接到 media 口" },
+                                ...auds.map((m) => ({ id: m.key, label: m.label }))],
+                               e.voiceKey || "", (v) => { e.voiceKey = v; draw(); }));
+            }
+            const said = S.shots.reduce((n2, sh) => n2 + sh.lines.filter((l) => l.entityId === e.id && l.text?.trim()).length, 0);
+            const spx = E("div"); spx.style.flex = "1"; foot.append(spx);
+            foot.append(E("span", "h3m-mini", said ? `名下 ${said} 句台词` : "名下暂无台词"));
+            card.append(foot);
             pane.append(card);
         });
 
-        const add = E("button", "h3m-btn", "+ 新增角色");
-        add.onclick = () => { S.characters.push(blankCharacter("")); draw(); };
-        pane.append(add);
+        const bar = E("div", "h3m-row");
+        for (const k of ENTITY_KINDS) {
+            const b = E("button", "h3m-btn sm", `+ ${k.icon} ${k.label}`);
+            b.title = k.hint;
+            b.onclick = () => { S.entities.push(blankEntity(k.id, "")); draw(); };
+            bar.append(b);
+        }
+        pane.append(bar);
     }
 
+    /* ------------------------------------------------------- 全局面板 */
     function drawGlobal() {
-        /* --- 任务类型 --- */
         const f00 = E("div", "h3m-fld");
         f00.append(E("h3", null, "任务类型"));
         f00.append(E("div", "h3m-hint",
@@ -635,7 +658,7 @@ export function openScriptModal(node, mediaList, onSave) {
             const cb = E("input"); cb.type = "checkbox"; cb.checked = on;
             cb.addEventListener("change", () => {
                 if (cb.checked) S.taskTypes.push(t.id);
-                else S.taskTypes = S.taskTypes.filter((x) => x !== t.id);
+                else S.taskTypes = S.taskTypes.filter((y) => y !== t.id);
                 draw();
             });
             const body = E("div");
@@ -646,19 +669,17 @@ export function openScriptModal(node, mediaList, onSave) {
         f00.append(cks);
         pane.append(f00);
 
-        /* --- 素材用途 --- */
         const f0 = E("div", "h3m-fld");
         f0.append(E("h3", null, "素材用途"));
         f0.append(E("div", "h3m-hint",
-            "指定每个素材做什么用。生成时自动编号成 <Picture 1>/<Audio 1> 并写进保留声明，编号不用你管。" +
-            "保留等级默认跟随用途，需要时可以覆盖——视觉与音频是两套官方词表。" +
-            "角色形象和音色不在这里选，去「角色」面板绑到具体角色上。"));
+            "这里只放不绑实体的用途：首尾帧、配乐、环境音、整轨复用。" +
+            "「这张图定义谁长什么样」去实体面板绑。生成时自动编号成 <Picture 1>/<Audio 1>。"));
         if (!mediaList.length) f0.append(E("div", "h3m-mini", "把 LoadImage / TTS 之类接到节点的 media 口即可。"));
-        const bound = characterBoundMedia(S);
+        const bound = entityBoundMedia(S);
         for (const m of mediaList) {
             const cfg = (S.media[m.key] ||= { kind: m.kind, role: "", retention: "", note: "" });
             cfg.kind = m.kind;
-            const b = bound[m.key];
+            const uses = bound[m.key];
             const r = E("div", "h3m-row");
             r.style.marginBottom = "7px";
             const c = E("span", "h3m-chip on");
@@ -666,47 +687,36 @@ export function openScriptModal(node, mediaList, onSave) {
             else c.append(E("span", "ic", m.kind === "audio" ? "♪" : m.kind === "video" ? "▶" : "🖼"));
             c.append(E("span", null, m.label));
             r.append(c);
-            if (b) {
-                // 已被角色占用：用途只读，避免同一件事有两个地方能改
-                const who = b.char.name?.trim() || "未命名角色";
-                const lk = E("span", "h3m-mini",
-                    `${b.role === "identity" ? "角色形象" : "音色"} → ${who}`);
+            if (uses) {
+                const txt = uses.map((u) => `${u.voice ? "音色" : "定义"} → ${u.ent.name?.trim() || "未命名实体"}`).join("，");
+                const lk = E("span", "h3m-mini", txt);
                 lk.style.cssText = "padding:6px 9px;border:1px dashed var(--line);border-radius:6px";
-                const jump = E("button", "h3m-btn gh", "去角色面板改");
+                const jump = E("button", "h3m-btn gh sm", "去实体面板改");
                 jump.onclick = () => { sel = "cast"; draw(); };
                 r.append(lk, jump);
             } else {
-                const roles = (MEDIA_ROLES[m.kind] || []).filter((x) => !x.viaCharacter);
-                r.append(dd([{ id: "", label: "（不使用）" }, ...roles], cfg.role,
+                r.append(dd([{ id: "", label: "（不使用）" }, ...(MEDIA_ROLES[m.kind] || [])], cfg.role,
                     (v) => { cfg.role = v; cfg.retention = ""; draw(); }));
+                if (cfg.role) {
+                    const auto = mediaRetention({ kind: m.kind, role: cfg.role });
+                    r.append(dd([{ id: "", label: `保留：${auto}（默认）` },
+                                 ...retentionSet(m.kind).map((y) => ({ id: y.id, label: `保留：${y.label}` }))],
+                                cfg.retention, (v) => { cfg.retention = v; }));
+                }
+                const note = E("input");
+                note.placeholder = "补充说明（可留空）"; note.style.flex = "1"; note.style.minWidth = "140px";
+                note.value = cfg.note || "";
+                note.addEventListener("input", () => { cfg.note = note.value; });
+                r.append(note);
             }
-            const effRole = b ? b.role : cfg.role;
-            if (effRole) {
-                const auto = mediaRetention({ kind: m.kind, role: effRole });
-                const set = retentionSet(m.kind);
-                const opts = [{ id: "", label: `保留：${auto}（默认）` },
-                              ...set.map((x) => ({ id: x.id, label: `保留：${x.label}` }))];
-                const s = dd(opts, cfg.retention, (v) => { cfg.retention = v; });
-                s.title = m.kind === "audio" ? "官方音频保留等级词表" : "官方视觉保留等级词表";
-                r.append(s);
-            }
-            const note = E("input");
-            note.placeholder = "补充说明（可留空）"; note.style.flex = "1"; note.style.minWidth = "140px";
-            note.value = cfg.note || "";
-            note.addEventListener("input", () => { cfg.note = note.value; });
-            if (!b) r.append(note);
             f0.append(r);
         }
         pane.append(f0);
 
-        /* --- 文字段落（官方分段） + 画风（非官方） --- */
-        const fields = [...SECTIONS.filter((s) => !s.auto), STYLE_FIELD];
-        for (const s of fields) {
+        for (const s of SECTIONS.filter((y) => !y.auto)) {
             const f = E("div", "h3m-fld");
-            const h = E("h3", null, s.label + (s.required ? "" : "（可选）"));
-            if (s.official === false) h.append(unofficial(s.hint));
-            f.append(h);
-            f.append(E("div", "h3m-hint", s.hint));
+            f.append(E("h3", null, s.label + (s.required ? "" : "（可选）")));
+            f.append(E("div", "h3m-hint", s.hint + "　可以用 @名字 引用实体。"));
             const ta = E("textarea");
             ta.value = S.sections[s.key] || "";
             ta.addEventListener("input", () => { S.sections[s.key] = ta.value; });
@@ -715,7 +725,6 @@ export function openScriptModal(node, mediaList, onSave) {
             pane.append(f);
         }
 
-        /* --- 不保留 --- */
         const f2 = E("div", "h3m-fld");
         f2.append(E("h3", null, "不保留的内容"));
         f2.append(E("div", "h3m-hint",
@@ -741,6 +750,51 @@ export function openScriptModal(node, mediaList, onSave) {
         pane.append(f2);
     }
 
+    /* ------------------------------------------- @ 引用输入框 + 实时解析 */
+    function refField(getText, setText, placeholder, minHeight) {
+        const wrap = E("div");
+        const ta = E("textarea");
+        ta.style.minHeight = minHeight || "104px";
+        ta.placeholder = placeholder;
+        ta.value = getText() || "";
+        const prev = E("div", "h3m-prev");
+        const sync = () => {
+            const plan = castPlan(S);
+            const bad = danglingRefs(ta.value, S);
+            prev.className = "h3m-prev" + (bad.length ? " bad" : "");
+            prev.textContent = ta.value.trim()
+                ? (bad.length ? `找不到实体：${bad.map((b) => "@" + b).join("、")}` : resolveRefs(ta.value, S, plan))
+                : "（这里会实时显示 @ 引用解析成 <Subject N> 之后的样子）";
+        };
+        ta.addEventListener("input", () => { setText(ta.value); sync(); });
+        ta.addEventListener("change", draw);
+        wrap.append(ta);
+
+        if (S.entities.length) {
+            const refs = E("div", "h3m-refs");
+            refs.append(E("span", "h3m-mini", "插入引用："));
+            S.entities.forEach((e, i) => {
+                const chip = E("span", "h3m-ref", `@${entName(e, i)}`);
+                chip.title = `${kindOf(e).label} · ${castBadge(castPlan(S)[e.id])}`;
+                chip.onclick = () => {
+                    const at = ta.selectionStart ?? ta.value.length;
+                    const tok = `@${entName(e, i)}`;
+                    ta.value = ta.value.slice(0, at) + tok + ta.value.slice(ta.selectionEnd ?? at);
+                    setText(ta.value);
+                    ta.focus();
+                    ta.selectionStart = ta.selectionEnd = at + tok.length;
+                    sync();
+                };
+                refs.append(chip);
+            });
+            wrap.append(refs);
+        }
+        wrap.append(prev);
+        sync();
+        return wrap;
+    }
+
+    /* ------------------------------------------------------- 分镜面板 */
     function drawShot(sh, i) {
         const probs = shotProblems(i);
         if (probs.length) {
@@ -758,9 +812,8 @@ export function openScriptModal(node, mediaList, onSave) {
         const up = E("button", "h3m-btn gh", "↑ 上移");
         up.disabled = i === 0;
         up.onclick = () => {
-            if (i === 0) return;
             const a = S.shots[i - 1];
-            [a.cutAt, sh.cutAt] = [sh.cutAt, a.cutAt];   // 起点留在原处，只换内容
+            [a.cutAt, sh.cutAt] = [sh.cutAt, a.cutAt];
             S.shots[i - 1] = sh; S.shots[i] = a;
             sel = i - 1; draw();
         };
@@ -768,7 +821,6 @@ export function openScriptModal(node, mediaList, onSave) {
         down.disabled = i === S.shots.length - 1;
         down.onclick = () => {
             const b = S.shots[i + 1];
-            if (!b) return;
             [b.cutAt, sh.cutAt] = [sh.cutAt, b.cutAt];
             S.shots[i + 1] = sh; S.shots[i] = b;
             sel = i + 1; draw();
@@ -776,14 +828,13 @@ export function openScriptModal(node, mediaList, onSave) {
         const del = E("button", "h3m-btn gh", "删除本镜");
         del.onclick = () => {
             S.shots.splice(i, 1);
-            if (S.shots.length) S.shots[0].cutAt = 0;    // 第 1 镜恒定从 0 开始
-            sel = S.shots.length ? Math.max(0, i - 1) : "global";
+            if (S.shots.length) S.shots[0].cutAt = 0;
+            sel = S.shots.length ? Math.max(0, i - 1) : "cast";
             draw();
         };
         hdr.append(up, down, del);
         pane.append(hdr);
 
-        // 时长用步进器（涟漪），起点由时间轴拖，不再让人算绝对时间码
         const lenRow = E("div", "h3m-row");
         lenRow.style.marginBottom = "12px";
         lenRow.append(E("span", "h3m-lab", "本镜时长"));
@@ -793,7 +844,7 @@ export function openScriptModal(node, mediaList, onSave) {
         pane.append(lenRow);
 
         const grid = E("div", "h3m-grid");
-        grid.style.marginBottom = "14px";
+        grid.style.marginBottom = "10px";
         if (i > 0) grid.append(labeled("转场（官方）", dd(TRANSITIONS, sh.transition, (v) => { sh.transition = v; })));
         grid.append(labeled("景别（非官方）", dd(SHOT_SIZES, sh.size, (v) => { sh.size = v; draw(); })));
         grid.append(labeled("机位角度（非官方）", dd(CAMERA_ANGLES, sh.angle, (v) => { sh.angle = v; })));
@@ -802,28 +853,29 @@ export function openScriptModal(node, mediaList, onSave) {
         grid.append(labeled("速度（官方）", dd(CAMERA_SPEED, sh.speed, (v) => { sh.speed = v; })));
         pane.append(grid);
         pane.append(E("div", "h3m-hint",
-            "标「非官方」的两项官方无受控词表（也没有「广角」「微距」这类镜头词），" +
-            "会作为普通英文写进画面描述；运镜/幅度/速度是官方词表，幅度与速度官方只有两档。"));
+            "标「非官方」的两项官方无受控词表（也没有「广角」「微距」这类镜头词），会作为普通英文写进描述。"));
 
         const f = E("div", "h3m-fld");
         f.append(E("h3", null, "画面描述"));
-        f.append(E("div", "h3m-hint", "直接写这一镜发生什么，不用管语法。"));
-        const ta = E("textarea");
-        ta.style.minHeight = "110px";
-        ta.value = sh.description || "";
-        ta.addEventListener("input", () => { sh.description = ta.value; });
-        ta.addEventListener("change", draw);
-        f.append(ta);
+        f.append(E("div", "h3m-hint",
+            "直接写这一镜发生什么。要提到某个实体就打 @ 或点下面的芯片，生成时自动换成 <Subject N>。"));
+        f.append(refField(() => sh.description, (v) => { sh.description = v; },
+            "例如：@少女 站在 @教室 门口，手里攥着 @旧信封"));
         pane.append(f);
 
-        const f1 = E("div", "h3m-fld");
-        f1.append(E("h3", null, "本镜引用素材"));
-        f1.append(picker(sh.refs, (k) => {
-            const p = sh.refs.indexOf(k);
-            if (p >= 0) sh.refs.splice(p, 1); else sh.refs.push(k);
-        }, ["image", "video"]));
-        pane.append(f1);
+        /* --- 变更：本镜内的状态变化 --- */
+        const fb = E("div", "h3m-fld");
+        fb.append(E("h3", null, "变更"));
+        fb.append(E("div", "h3m-hint",
+            "这一镜里谁换了衣服、谁把东西给了谁、什么东西出现或消失。" +
+            "预设不够用就选「自定义」，自己写一句，里面照样能 @ 引用实体。"));
+        sh.beats.forEach((b, j) => fb.append(beatCard(sh, b, j)));
+        const addBeat = E("button", "h3m-btn", "+ 添加变更");
+        addBeat.onclick = () => { sh.beats.push(blankBeat(S.entities[0]?.id || "")); draw(); };
+        fb.append(addBeat);
+        pane.append(fb);
 
+        /* --- 台词 --- */
         const f3 = E("div", "h3m-fld");
         const h = E("div", "h3m-row");
         h.append(E("h3", null, "台词"));
@@ -836,22 +888,26 @@ export function openScriptModal(node, mediaList, onSave) {
             h.append(m);
         }
         f3.append(h);
-        sh.lines.forEach((ln, j) => f3.append(lineCard(sh, ln, j)));
+        const speakers = S.entities.filter((e) => kindOf(e).canSpeak);
+        if (!speakers.length) {
+            f3.append(E("div", "h3m-mini", "还没有能说话的实体。到实体面板加一个「人物」或「画外音」。"));
+        }
+        sh.lines.forEach((ln, j) => f3.append(lineCard(sh, ln, j, speakers)));
         const addL = E("button", "h3m-btn", "+ 添加台词");
-        // 默认说话人：接着本镜上一句的人说；没有就用第一个角色。对话戏里再手动切
+        addL.disabled = !speakers.length;
         addL.onclick = () => {
-            const prev = sh.lines.at(-1)?.charId;
-            sh.lines.push(blankLine(prev || S.characters[0]?.id || ""));
+            const prev = sh.lines.at(-1)?.entityId;
+            sh.lines.push(blankLine(prev || speakers[0]?.id || ""));
             draw();
         };
         f3.append(addL);
-        if (S.characters.length > 1) {
+        if (speakers.length > 1) {
             const addO = E("button", "h3m-btn", "+ 对方接话");
             addO.style.marginLeft = "8px";
-            addO.title = "新增一句，说话人自动换成上一句以外的角色";
+            addO.title = "新增一句，说话人自动换成上一句以外的实体";
             addO.onclick = () => {
-                const prev = sh.lines.at(-1)?.charId;
-                const other = S.characters.find((ch) => ch.id !== prev) || S.characters[0];
+                const prev = sh.lines.at(-1)?.entityId;
+                const other = speakers.find((e) => e.id !== prev) || speakers[0];
                 sh.lines.push(blankLine(other.id));
                 draw();
             };
@@ -860,30 +916,74 @@ export function openScriptModal(node, mediaList, onSave) {
         pane.append(f3);
     }
 
-    function lineCard(sh, ln, j) {
+    function beatCard(sh, b, j) {
+        const k = BEAT_KINDS.find((x) => x.id === b.kind) || BEAT_KINDS[0];
+        const wrap = E("div");
+        const row = E("div", "h3m-beat");
+        row.append(dd(BEAT_KINDS, b.kind, (v) => { b.kind = v; draw(); }));
+        if (k.needs.includes("actor")) {
+            row.append(E("span", "h3m-lab", "谁"), dd(entOptions("（选实体）"), b.actor, (v) => { b.actor = v; draw(); }));
+        }
+        if (k.needs.includes("target")) {
+            row.append(E("span", "h3m-lab", k.id === "swap" ? "从" : "对象"),
+                       dd(entOptions("（选实体）"), b.target, (v) => { b.target = v; draw(); }));
+        }
+        if (k.needs.includes("recipient")) {
+            row.append(E("span", "h3m-lab", k.id === "give" ? "给" : "换成"),
+                       dd(entOptions("（选实体）"), b.recipient, (v) => { b.recipient = v; draw(); }));
+        }
+        const at = E("input");
+        at.type = "number"; at.step = "0.1"; at.min = "0"; at.style.width = "72px";
+        at.placeholder = "秒"; at.value = b.at ?? "";
+        at.title = "本镜开始后第几秒发生。留空 = 不指定";
+        at.addEventListener("input", () => { b.at = at.value; });
+        at.addEventListener("change", draw);
+        row.append(E("span", "h3m-lab", "+"), at, E("span", "h3m-mini", "s"));
+        const sp = E("div"); sp.style.flex = "1"; row.append(sp);
+        const rm = E("button", "h3m-btn gh sm", "✕");
+        rm.onclick = () => { sh.beats.splice(j, 1); draw(); };
+        row.append(rm);
+        wrap.append(row);
+
+        if (k.id === "custom") {
+            wrap.append(refField(() => b.text, (v) => { b.text = v; },
+                "自己写这一刻发生了什么，例如：@旧信封 在 @少女 手里被风吹散，纸片飘过 @教室 的窗", "62px"));
+        } else {
+            const extra = E("input");
+            extra.placeholder = "补充一句（可留空），也能 @ 引用实体";
+            extra.style.width = "100%";
+            extra.value = b.text || "";
+            extra.addEventListener("input", () => { b.text = extra.value; });
+            extra.addEventListener("change", draw);
+            wrap.append(extra);
+            const plan = castPlan(S);
+            const s2 = beatSentence(b, S, plan);
+            const prev = E("div", "h3m-prev" + (s2 ? "" : " bad"), s2 || "还缺实体，这条变更不会发送");
+            wrap.append(prev);
+        }
+        wrap.style.marginBottom = "9px";
+        return wrap;
+    }
+
+    function lineCard(sh, ln, j, speakers) {
         const plan = castPlan(S);
         const c = E("div", "h3m-line");
         const h = E("div", "h3m-line-hd");
         h.append(E("span", "h3m-lab", `第 ${j + 1} 句`));
-
-        // 说话人：多角色时这是最关键的一格，放在最前面
-        const who = dd([{ id: "", label: "（未指定说话人）" },
-            ...S.characters.map((ch, k) => ({ id: ch.id, label: ch.name?.trim() || `角色 ${k + 1}` }))],
-            ln.charId || "", (v) => { ln.charId = v; draw(); });
-        who.title = "这句是谁说的";
-        h.append(who);
-        const p = plan[ln.charId];
+        h.append(dd([{ id: "", label: "（未指定说话人）" },
+            ...speakers.map((e) => ({ id: e.id, label: `${kindOf(e).icon} ${e.name?.trim() || "未命名"}` }))],
+            ln.entityId || "", (v) => { ln.entityId = v; draw(); }, "这句是谁说的"));
+        const p = plan[ln.entityId];
         if (p) {
             const badge = E("span", "h3m-id" + (p.speaker ? "" : " none"),
                 p.speaker ? `${p.label} (${p.speaker})` : p.label);
-            badge.title = p.char.voiceKey
-                ? "该角色已绑定音色，本句会带上音色引用"
-                : "该角色未绑定音色，音色由模型自由发挥";
+            badge.title = p.ent.voiceKey ? "该实体已绑定音色，本句会带上音色引用"
+                                         : "该实体未绑定音色，音色由模型自由发挥";
             h.append(badge);
         }
         h.append(dd(VOICE_MODES, ln.mode, (v) => { ln.mode = v; draw(); }));
-        const cont = dd(CONTINUITY, ln.continuity || "complete", (v) => { ln.continuity = v; draw(); });
-        cont.title = "官方标记：延续/承接会在 <d> 内加 <scenetrans>，被打断加 <cutoff>";
+        const cont = dd(CONTINUITY, ln.continuity || "complete", (v) => { ln.continuity = v; draw(); },
+            "官方标记：延续/承接会在 <d> 内加 <scenetrans>，被打断加 <cutoff>");
         h.append(cont);
         const cnt = E("span", "h3m-mini", `${spokenChars(ln.text)} 字 · ${speechSeconds(ln.text).toFixed(1)}s`);
         const sp = E("div"); sp.style.flex = "1";

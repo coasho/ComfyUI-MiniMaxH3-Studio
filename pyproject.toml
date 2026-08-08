@@ -7,11 +7,11 @@ license = { file = "LICENSE" }
 dependencies = []
 
 [project.urls]
-Repository = "https://github.com/nkxx188/ComfyUI-MiniMaxH3-Studio"
-Documentation = "https://github.com/nkxx188/ComfyUI-MiniMaxH3-Studio#readme"
-"Bug Tracker" = "https://github.com/nkxx188/ComfyUI-MiniMaxH3-Studio/issues"
+Repository = "https://github.com/coasho/ComfyUI-MiniMaxH3-Studio"
+Documentation = "https://github.com/coasho/ComfyUI-MiniMaxH3-Studio#readme"
+"Bug Tracker" = "https://github.com/coasho/ComfyUI-MiniMaxH3-Studio/issues"
 
 [tool.comfy]
-PublisherId = "nkxx188"
+PublisherId = "coasho"
 DisplayName = "ComfyUI-MiniMaxH3-Studio"
 Icon = ""

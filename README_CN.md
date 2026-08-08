@@ -22,7 +22,7 @@
 ## 安装
 
 ```bash
-git clone https://github.com/nkxx188/ComfyUI-MiniMaxH3-Studio.git
+git clone https://github.com/coasho/ComfyUI-MiniMaxH3-Studio.git
 ```
 
 克隆到 `ComfyUI/custom_nodes/` 下，装一下可选依赖，然后重启：

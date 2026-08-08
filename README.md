@@ -24,7 +24,7 @@ references them inline as `@name`. The script editor sits on top of this.</sup>
 ## Install
 
 ```bash
-git clone https://github.com/nkxx188/ComfyUI-MiniMaxH3-Studio.git
+git clone https://github.com/coasho/ComfyUI-MiniMaxH3-Studio.git
 ```
 
 Clone it into `ComfyUI/custom_nodes/`, then install the optional extras and restart:

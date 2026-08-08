@@ -26,9 +26,12 @@ except ImportError:                       # 独立加载（测试台）时没有
 STYLES = {
     "natural": (
         "Describe this image as a prompt for an image generation model. "
-        "One flowing paragraph of plain English, present tense, no preamble. "
+        "Plain English prose, present tense, no preamble, no headings. "
         "Cover the subject, what they look like, what they are wearing or made of, "
         "the pose or action, the setting, the lighting, the composition and the art style. "
+        # 不写这句它会自觉「收敛成一段」，把一半细节丢掉
+        "Write as much as the picture needs — do not summarise, do not leave detail out "
+        "to keep it short. "
         "Be concrete and specific. State only what is actually visible — "
         "never guess at names, stories, brands or anything off-frame."
     ),
@@ -155,6 +158,9 @@ class ImageToPromptBilingual:
                                "离散属性标签比 VLM 准。写实照片建议关。"}),
             },
             "optional": {
+                "max_tokens": ("INT", {"default": 640, "min": 128, "max": 4096, "step": 64,
+                    "tooltip": "生成长度上限。太小会把描述从中间切断——320 大约只够 240 个"
+                               "英文词，长标签表根本写不完。写实照片可以调小，设定稿调大。"}),
                 "hint": ("STRING", {"multiline": True, "default": "",
                     "tooltip": "补充要求，例如「只描述人物，忽略背景」「用于 SDXL」。"}),
                 "unload_after": ("BOOLEAN", {"default": True,
@@ -176,7 +182,7 @@ class ImageToPromptBilingual:
     DESCRIPTION = "图生文反推提示词：自然语言 / 标签 × 中文 / 英文，四路各自可开关。"
 
     def run(self, image, natural_en, natural_zh, tags_en, tags_zh,
-            backend, use_wd14_tags, hint="", unload_after=True):
+            backend, use_wd14_tags, max_tokens=640, hint="", unload_after=True):
         img = _to_pil(image)
         t0 = time.time()
         s = caption.load_settings()
@@ -207,11 +213,12 @@ class ImageToPromptBilingual:
                 tag_en = wd14
             else:
                 if need_natural:
-                    nat_en = self._describe(img, "natural", wd14, hint, backend, s)
+                    nat_en = self._describe(img, "natural", wd14, hint,
+                                            backend, s, max_tokens)
                     did.append("natural")
                 if need_tags:
-                    tag_en = _clean_tags(
-                        self._describe(img, "tags", wd14, hint, backend, s))
+                    tag_en = _clean_tags(self._describe(img, "tags", wd14, hint,
+                                                        backend, s, max_tokens))
                     did.append("tags")
 
             nat_zh = tag_zh = ""
@@ -234,14 +241,21 @@ class ImageToPromptBilingual:
                     traceback.print_exc()
 
     @staticmethod
-    def _describe(img, style, wd14, hint, backend, s) -> str:
+    def _describe(img, style, wd14, hint, backend, s, max_tokens=None) -> str:
         parts = [STYLES.get(style) or STYLES["natural"]]
         if wd14:
+            # 原来这里只写「冲突时以标签为准」——那是仲裁规则，不是覆盖要求，
+            # 模型于是把标签当成发色瞳色的参考依据，剩下的照自己意思删。
+            # 要它别丢内容，就得明说每一条都要落到文字里。
             parts.append(
                 "A danbooru tagger read this image as: " + wd14 + ". "
                 "Those tags are more reliable than your own reading for discrete "
-                "attributes such as hair colour, eye colour and garment names. "
-                "Follow them where they conflict with what you think you see.")
+                "attributes such as hair colour, eye colour and garment names — "
+                "follow them wherever they conflict with what you think you see. "
+                "Every one of those tags must be accounted for somewhere in your answer. "
+                "Do not drop a tag because it seems minor or repetitive. "
+                "The only exception is a tag you can see is plainly wrong for this image; "
+                "leave that one out rather than describing something that is not there.")
         if hint and hint.strip():
             parts.append("Additional instruction from the user: " + hint.strip())
         instruction = "\n\n".join(parts)
@@ -249,7 +263,7 @@ class ImageToPromptBilingual:
             return (caption.openai_describe(_data_url(img), instruction, s) or "").strip()
         if not caption.qwen_ready():
             raise RuntimeError(f"Qwen3-VL 还没下载到 {caption.QWEN_DIR}")
-        return (caption.qwen_describe(img, instruction) or "").strip()
+        return (caption.qwen_describe(img, instruction, max_tokens) or "").strip()
 
     @staticmethod
     def _translate(text: str, system: str, backend: str, s: dict) -> str:

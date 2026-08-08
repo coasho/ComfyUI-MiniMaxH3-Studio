@@ -385,7 +385,7 @@ def _load_qwen():
         return _qwen
 
 
-def qwen_describe(img, instruction: str) -> str:
+def qwen_describe(img, instruction: str, max_new_tokens: int | None = None) -> str:
     import torch
     model, proc = _load_qwen()
     msgs = [{"role": "user", "content": [
@@ -395,7 +395,8 @@ def qwen_describe(img, instruction: str) -> str:
     text = proc.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     inputs = proc(text=[text], images=[img], return_tensors="pt").to(model.device)
     with torch.inference_mode():
-        out = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
+        out = model.generate(**inputs, do_sample=False,
+                             max_new_tokens=int(max_new_tokens or MAX_NEW_TOKENS))
     trimmed = out[0][inputs.input_ids.shape[1]:]
     return proc.decode(trimmed, skip_special_tokens=True).strip()
 

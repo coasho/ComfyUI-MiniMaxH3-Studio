@@ -16,7 +16,7 @@ import {
     SECTIONS, MEDIA_ROLES, ENTITY_KINDS, BEAT_KINDS,
     CAMERA_MOTIONS, CAMERA_AMPLITUDE, CAMERA_SPEED,
     SHOT_SIZES, CAMERA_ANGLES, TRANSITIONS, VOICE_MODES, CONTINUITY,
-    DELIVERY_PRESETS, LANGUAGES, TASK_TYPES, taskTypes,
+    DELIVERY_PRESETS, LANGUAGES, TASK_TYPES, taskTypes, lineRefName, lineRefs,
     SPEECH, spokenChars, speechSeconds,
 } from "./h3_script_editor.js";
 import { framingWarning } from "./h3_grammar.js";
@@ -129,6 +129,11 @@ const CSS = `
 .h3m-ac-item .k{flex:0 0 auto}
 .h3m-ac-item .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
 .h3m-ac-item .id{font-family:ui-monospace,Consolas,monospace;font-size:calc(var(--h3m-fs,15px)*0.778);color:var(--dim)}
+.h3m-lineref{font-family:ui-monospace,Consolas,monospace;
+  font-size:calc(var(--h3m-fs,15px)*0.815);background:#233a63;border:1px solid #35538c;
+  color:#a8c6ff;border-radius:5px;padding:0 7px;cursor:pointer;user-select:none}
+.h3m-lineref:hover{background:#2b4778}
+.h3m-lineref.copied{background:#1e3a2a;border-color:#2f6448;color:#67c98a}
 .h3m-ac-empty{padding:7px 10px;font-size:calc(var(--h3m-fs,15px)*0.889);color:var(--dim)}
 
 .h3m-tl{position:relative;height:34px;border-radius:6px;border:1px solid var(--line);
@@ -554,7 +559,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         if (fw) out.push(fw);
         if (!sh.description?.trim() && !sh.beats.length) out.push("既没有画面描述也没有变更");
         for (const t of [sh.description, ...sh.beats.map((b) => b.text)]) {
-            for (const bad of danglingRefs(t, S)) out.push(`引用了不存在的实体「@${bad}」`);
+            for (const bad of danglingRefs(t, S, sh)) out.push(`引用了不存在的实体「@${bad}」`);
         }
         return out;
     }
@@ -708,7 +713,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     }
 
     function drawStatus() {
-        const all = validate(S);
+        const all = validate(S, fakeTokens());
         stat.textContent = all.length ? `⚠ ${all.length} 个问题　点击查看` : "✅ 校验通过";
         stat.className = "h3m-mini" + (all.length ? " h3m-stat" : "");
         stat.style.color = all.length ? "var(--warn)" : "var(--ok)";
@@ -961,6 +966,8 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
                 : "这是什么、长什么样。也可以在这里 @ 引用其他实体";
             ta.value = e.desc || "";
             bindText(ta, (v) => { e.desc = v; });
+            // 实体描述里的 @ 在 assemble 里是会解析的，补全也得挂上
+            attachRefAutocomplete(ta, (v) => { e.desc = v; softRefresh(); });
             card.append(ta);
 
             // 素材绑定：一个实体可以被多张图/多段视频分别定义
@@ -1180,6 +1187,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             const ta = E("textarea");
             ta.value = S.sections[s.key] || "";
             bindText(ta, (v) => { S.sections[s.key] = v; });
+            attachRefAutocomplete(ta, (v) => { S.sections[s.key] = v; softRefresh(); });
             f.append(ta);
             pane.append(f);
         }
@@ -1298,11 +1306,17 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
                 return;
             }
             const plan = castPlan(S);
-            items.forEach((e, k) => {
+            items.forEach((it, k) => {
                 const row = E("div", "h3m-ac-item" + (k === idx ? " on" : ""));
-                row.append(E("span", "k", kindOf(e).icon));
-                row.append(E("span", "nm", e.name.trim()));
-                row.append(E("span", "id", castBadge(plan[e.id])));
+                if (it.kind === "line") {
+                    row.append(E("span", "k", "💬"));
+                    row.append(E("span", "nm", it.name));
+                    row.append(E("span", "id", (it.line.text || "").trim().slice(0, 16) || "（空）"));
+                } else {
+                    row.append(E("span", "k", kindOf(it.ent).icon));
+                    row.append(E("span", "nm", it.name));
+                    row.append(E("span", "id", castBadge(plan[it.ent.id])));
+                }
                 row.onmousedown = (ev) => { ev.preventDefault(); accept(k); };
                 pop.append(row);
             });
@@ -1313,8 +1327,15 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             const ctx = context();
             if (!ctx) { closePop(); return; }
             const q = ctx.frag.toLowerCase();
-            items = S.entities.filter((e) => e.name?.trim())
-                .filter((e) => !q || e.name.trim().toLowerCase().includes(q));
+            const ents = S.entities.filter((e) => e.name?.trim())
+                .filter((e) => !q || e.name.trim().toLowerCase().includes(q))
+                .map((e) => ({ kind: "entity", ent: e, name: e.name.trim() }));
+            // 在分镜面板里编辑时，本分镜的台词也能被 @ 引用
+            const sh = typeof sel === "number" ? S.shots[sel] : null;
+            const lns = (sh ? lineRefs(sh) : [])
+                .filter((r) => !q || r.name.toLowerCase().includes(q))
+                .map((r) => ({ kind: "line", line: r.line, name: r.name }));
+            items = [...ents, ...lns];
             tokenStart = ctx.at;
             idx = 0;
             if (!pop) { pop = E("div", "h3m-ac"); document.body.append(pop); }
@@ -1323,10 +1344,10 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         };
 
         const accept = (k) => {
-            const e = items[k];
-            if (!e || tokenStart < 0) { closePop(); return; }
+            const it = items[k];
+            if (!it || tokenStart < 0) { closePop(); return; }
             const pos = ta.selectionStart ?? 0;
-            const name = e.name.trim();
+            const name = it.name;
             ta.value = ta.value.slice(0, tokenStart) + "@" + name + ta.value.slice(pos);
             const caret = tokenStart + 1 + name.length;
             ta.setSelectionRange(caret, caret);
@@ -1348,8 +1369,18 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         ta.addEventListener("scroll", place);
     }
 
+    /** 预览用：实体换 <Subject N>，台词换一个短占位（整句英文塞进来没法读） */
+    function previewRefs(text, shot, plan) {
+        let out = resolveRefs(text, S, plan);
+        for (const r of lineRefs(shot)) {
+            const body = (r.line.text || "").trim();
+            out = out.split("@" + r.name).join(`〔${r.name}：${body.slice(0, 12)}〕`);
+        }
+        return out;
+    }
+
     /* ------------------------------------------- @ 引用输入框 + 实时解析 */
-    function refField(getText, setText, placeholder, minHeight) {
+    function refField(getText, setText, placeholder, minHeight, shot = null) {
         const wrap = E("div");
         const ta = E("textarea");
         ta.style.minHeight = minHeight || "104px";
@@ -1358,11 +1389,12 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         const prev = E("div", "h3m-prev");
         const sync = () => {
             const plan = castPlan(S);
-            const bad = danglingRefs(ta.value, S);
+            const bad = danglingRefs(ta.value, S, shot);
             prev.className = "h3m-prev" + (bad.length ? " bad" : "");
             prev.textContent = ta.value.trim()
-                ? (bad.length ? `找不到实体：${bad.map((b) => "@" + b).join("、")}` : resolveRefs(ta.value, S, plan))
-                : "（这里会实时显示 @ 引用解析成 <Subject N> 之后的样子）";
+                ? (bad.length ? `找不到实体：${bad.map((b) => "@" + b).join("、")}`
+                              : previewRefs(ta.value, shot, plan))
+                : "（这里会实时显示 @ 引用解析之后的样子）";
         };
         ta.addEventListener("input", () => { setText(ta.value); sync(); softRefresh(); });
         attachRefAutocomplete(ta, (v) => { setText(v); sync(); softRefresh(); });
@@ -1459,7 +1491,8 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         f.append(E("div", "h3m-hint",
             "直接写这一镜发生什么。要提到某个实体就打 @ 或点下面的芯片，生成时自动换成 <Subject N>。"));
         f.append(refField(() => sh.description, (v) => { sh.description = v; },
-            "例如：@少女 站在 @教室 门口，手里攥着 @旧信封"));
+            "例如：@少女 站在 @教室 门口说 @台词1，转身后再说 @台词2",
+            null, sh));
         pane.append(f);
 
         /* --- 变更：本镜内的状态变化 --- */
@@ -1545,7 +1578,8 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
 
         if (k.id === "custom") {
             wrap.append(refField(() => b.text, (v) => { b.text = v; },
-                "自己写这一刻发生了什么，例如：@旧信封 在 @少女 手里被风吹散，纸片飘过 @教室 的窗", "62px"));
+                "自己写这一刻发生了什么，例如：@旧信封 在 @少女 手里被风吹散，纸片飘过 @教室 的窗",
+                "62px", sh));
         } else {
             const extra = E("input");
             extra.placeholder = "补充一句（可留空），也能 @ 引用实体";
@@ -1572,6 +1606,16 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         const c = E("div", "h3m-line");
         const h = E("div", "h3m-line-hd");
         h.append(E("span", "h3m-lab", `第 ${j + 1} 句`));
+        // 这条台词的引用名。写进画面描述里，成片中这句就落在那个位置，
+        // 而不是被堆到整段末尾。
+        const ref = E("span", "h3m-lineref", "@" + lineRefName(j));
+        ref.title = "点一下复制。把它写进「画面描述」里，这句台词就落在那个位置。";
+        ref.onclick = () => {
+            navigator.clipboard?.writeText("@" + lineRefName(j)).catch(() => {});
+            ref.classList.add("copied");
+            setTimeout(() => ref.classList.remove("copied"), 900);
+        };
+        h.append(ref);
         h.append(dd([{ id: "", label: "（未指定说话人）" },
             ...speakers.map((e) => ({ id: e.id, label: `${kindOf(e).icon} ${e.name?.trim() || "未命名"}` }))],
             ln.entityId || "", (v) => { ln.entityId = v; draw(); }, "这句是谁说的"));

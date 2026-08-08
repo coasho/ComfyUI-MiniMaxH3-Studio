@@ -60,7 +60,24 @@ export function blankShot(cutAt = 0) {
 export function blankLine(entityId = "") {
     // delivery 默认留空：预填一个「气声耳语」这种强指令，会在用户没察觉时
     // 把每一句台词都改成那个语气。
-    return { text: "", entityId, delivery: "", mode: "onscreen", continuity: "complete" };
+    return { id: newId("ln"), text: "", entityId, delivery: "",
+             mode: "onscreen", continuity: "complete" };
+}
+
+/**
+ * 一条台词在提示词里的引用名，形如 @台词1。
+ *
+ * 一个分镜里的几句话常常要落在描述的不同位置（说完这句，转身，再说下句），
+ * 全部堆在段尾模型就按自己的节奏排。给每条一个可 @ 的名字，写在描述里哪儿
+ * 就落在哪儿。编号按分镜内顺序，改顺序会跟着变——所以 UI 上要显示当前的名字。
+ */
+export const lineRefName = (i) => `台词${i + 1}`;
+
+/** 分镜里所有台词的引用名，供 @ 补全和解析用 */
+export function lineRefs(shot) {
+    return (shot?.lines || [])
+        .map((ln, i) => ({ line: ln, name: lineRefName(i), index: i }))
+        .filter((x) => x.line?.text?.trim());
 }
 
 /** 需要中译英的散文字段（台词永远不在此列） */
@@ -205,8 +222,10 @@ export function resolveRefs(text, script, plan) {
 }
 
 /** 文本里所有 @xxx 里、对不上实体的那些 */
-export function danglingRefs(text, script) {
+export function danglingRefs(text, script, shot = null) {
     const known = new Set((script.entities || []).map((e) => e.name?.trim()).filter(Boolean));
+    // 分镜里编辑时，本分镜的 @台词N 也是合法引用，别报成「找不到实体」
+    for (const r of lineRefs(shot)) known.add(r.name);
     const out = [];
     // 中英文名都可能，取到下一个空白/标点为止
     for (const m of String(text || "").matchAll(/@([^\s，。！？、；："'（）()<>@]+)/g)) {
@@ -345,7 +364,8 @@ function ts(t) {
     return `${String(m).padStart(2, "0")}:${(t - m * 60).toFixed(3).padStart(6, "0")}`;
 }
 
-const period = (t) => (/[.。!！?？]$/.test(t) ? t : t + ".");
+// 描述末尾插了台词时会以 </d> 收尾，再补个句号就成了「</d>.」
+const period = (t) => (/[.。!！?？]$|<\/(d|cutoff|scenetrans)>$/.test(t) ? t : t + ".");
 
 function dialogueBody(text, continuity) {
     const t = text.trim();
@@ -511,15 +531,10 @@ export function assemble(script, mediaTokens = {}) {
         } else if (framing) {
             bits.push(`The opening shot is ${framing}.`);
         }
-        if (sh.description?.trim()) bits.push(period(R(sh.description.trim())));
-        const cam = cameraSentence(sh);
-        if (cam) bits.push(cam);
-        for (const b of sh.beats || []) {
-            const s2 = beatSentence(b, script, plan);
-            if (s2) bits.push(s2);
-        }
-        for (const ln of sh.lines || []) {
-            if (!ln.text?.trim()) continue;
+        // 台词句子先备好，描述里 @ 到哪条就插到哪儿，没被 @ 的照旧接在段尾
+        const refs = lineRefs(sh);
+        const sentence = new Map();
+        for (const { line: ln, name } of refs) {
             const mode = VOICE_MODES.find((x) => x.id === ln.mode) || VOICE_MODES[0];
             const p = plan[ln.entityId];
             const who = p ? p.label : "the character";
@@ -528,10 +543,34 @@ export function assemble(script, mediaTokens = {}) {
             const lang = p?.ent.language?.trim() || script.language;
             // 语气是用户手写的，常带句号；直接拼会出现「confused.:」这种脏东西
             const delivery = String(ln.delivery || "").trim().replace(/[.,;:：，。；]+$/, "");
-            bits.push(`${who}${sid} speaks` +
-                      (vToken ? ` using the voice timbre and delivery referenced from ${vToken},` : "") +
-                      ` ${mode.en}` + (delivery ? `, ${delivery}` : "") +
-                      `: <d>[${lang}] ${dialogueBody(ln.text, ln.continuity)}</d>`);
+            sentence.set(name,
+                `${who}${sid} speaks` +
+                (vToken ? ` using the voice timbre and delivery referenced from ${vToken},` : "") +
+                ` ${mode.en}` + (delivery ? `, ${delivery}` : "") +
+                `: <d>[${lang}] ${dialogueBody(ln.text, ln.continuity)}</d>`);
+        }
+        const placed = new Set();
+        const putLines = (text) => {
+            if (!refs.length) return text;
+            const re = new RegExp("@(" + refs.map((r) => ESC(r.name)).join("|") + ")(?![0-9])", "g");
+            return text.replace(re, (m, name) => {
+                const s2 = sentence.get(name);
+                if (!s2) return m;
+                placed.add(name);
+                return s2;
+            });
+        };
+
+        if (sh.description?.trim()) bits.push(period(putLines(R(sh.description.trim()))));
+        const cam = cameraSentence(sh);
+        if (cam) bits.push(cam);
+        for (const b of sh.beats || []) {
+            const s2 = beatSentence(b, script, plan);
+            if (s2) bits.push(putLines(s2));
+        }
+        // 没被 @ 到的台词按原顺序接在段尾——老剧本一个字都不用改
+        for (const { name } of refs) {
+            if (!placed.has(name)) bits.push(sentence.get(name));
         }
         body.push(bits.join(" "));
     });
@@ -539,7 +578,9 @@ export function assemble(script, mediaTokens = {}) {
 
     S.push("overall_soundscape: " + (script.sections.overall_soundscape?.trim()
         ? R(script.sections.overall_soundscape.trim()) : "N/A"));
-    S.push("non_diegetic_music: " + (script.sections.non_diegetic_music?.trim() || "N/A"));
+    // 配乐段之前漏了 R()：面板上写着「可以用 @名字 引用实体」，这里却原样发出去
+    S.push("non_diegetic_music: " + (script.sections.non_diegetic_music?.trim()
+        ? R(script.sections.non_diegetic_music.trim()) : "N/A"));
     return S.join("\n\n");
 }
 
@@ -593,10 +634,42 @@ export function entityProblems(script) {
     return out;
 }
 
-export function validate(script) {
+/**
+ * 手勾了任务类型、却没有任何素材撑着它。
+ *
+ * 方括号里那串只是告诉 H3「这次有哪几条参考通路」，真正起作用的是素材用途：
+ * 关键帧补全要有图配「首帧/尾帧」，视频编辑要有视频配「编辑源素材」，
+ * 视频续写要有视频配「续写起点」。光勾框不配素材，那个词就只是个词。
+ */
+const TASK_NEEDS = {
+    keyframe_completion: { kind: "image", roles: ["first_frame", "last_frame"],
+                           what: "一张图配成「首帧」或「尾帧」" },
+    video_editing: { kind: "video", roles: ["edit_src"], what: "一段视频配成「编辑源素材」" },
+    video_continuation: { kind: "video", roles: ["continue"], what: "一段视频配成「续写起点」" },
+    audio_reuse: { kind: "audio", roles: ["copy_full", "copy_part"],
+                   what: "一段音频配成「整轨复用」或「部分复用」" },
+};
+
+export function unbackedTaskTypes(script, mediaTokens = {}) {
+    const have = new Set();
+    for (const [key, cfg] of Object.entries(script.media || {})) {
+        if (cfg?.role && mediaTokens[key]) have.add(`${cfg.kind || "image"}:${cfg.role}`);
+    }
+    return (script.taskTypes || []).filter((id) => {
+        const need = TASK_NEEDS[id];
+        return need && !need.roles.some((r) => have.has(`${need.kind}:${r}`));
+    });
+}
+
+export function validate(script, mediaTokens = {}) {
     const out = [];
     const shots = script.shots || [];
     const ids = new Set((script.entities || []).map((e) => e.id));
+    for (const id of unbackedTaskTypes(script, mediaTokens)) {
+        const t = TASK_TYPES.find((x) => x.id === id);
+        out.push(`任务类型勾了「${t.label}」，但没有${TASK_NEEDS[id].what}。` +
+                 `这样只会在 summary 里多一个「${t.en}」，没有实际素材支撑。`);
+    }
     if (!shots.length) return ["还没有分镜。"];
     if (Math.abs(shots[0].cutAt) > 1e-6) out.push("第 1 镜必须从 0 秒开始。");
     for (let i = 1; i < shots.length; i++) {

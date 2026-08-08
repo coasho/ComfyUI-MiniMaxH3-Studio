@@ -1,0 +1,212 @@
+# ComfyUI-MiniMaxH3-Easy
+
+[中文说明 / Chinese documentation](README_CN.md)
+
+`ComfyUI-MiniMaxH3-Easy` integrates MiniMax H3 text-to-video, image-to-video,
+and reference-to-video generation into one streamlined ComfyUI workflow surface.
+The interaction layer has been deliberately polished to make media input,
+reference selection, and prompt editing simple to understand and quick to use.
+
+The idea is simple: keep the power of ComfyUI, while removing the repetitive
+media wiring and reference bookkeeping that normally make MiniMax H3 workflows
+hard to read and harder to learn.
+
+## Highlights
+
+### One `Media` input for mixed media
+
+The main node uses one visible `Media` input for images, videos, and audio.
+Multiple links can enter the same port. Image, video, and audio order numbers
+are tracked independently, and each media type has its own wire color and
+preview style.
+
+<p align="center">
+  <img src="images/mixed-media-input-en.png" alt="Mixed media input" width="560">
+</p>
+
+This keeps the graph compact without losing ordering information. Drag from
+`Media` to an empty area of the canvas to quickly create a compatible media
+node. Click the number in the middle of a virtual media wire to open the small
+delete menu.
+
+<p align="center">
+  <img src="images/quick-create-node-en.png" alt="Quick-create media node" width="460">
+</p>
+
+### A complete `@` reference editor
+
+`@` is available in **Reference Video** mode. Type `@` to select a connected
+image, video, or standalone audio resource. The popup presents images first,
+videos second, and audio last, with a preview for each item.
+
+<p align="center">
+  <img src="images/mention-popup-en.png" alt="Reference popup" width="320">
+</p>
+
+<p align="center">
+  <img src="images/reference-editor-en.png" alt="Reference editor" width="720">
+</p>
+
+References use **By index** by default because it is concise and easy to scan.
+**By filename** is available when the filename itself is more meaningful.
+
+The chips are an editing interface only. When the workflow runs, the node
+automatically converts them into the reference format recommended by MiniMax,
+including `<Picture N>`, `<Video N>`, and `<Audio N>`. Users do not need to
+manually write or maintain those tags.
+
+A video's synchronized soundtrack is handled together with that video. A
+standalone audio input remains an independent reference, so users only need to
+connect the media they actually want to use.
+
+### Simple dialogue blocks
+
+Type `#` in the prompt editor to insert an editable dialogue block.
+
+<p align="center">
+  <img src="images/dialogue-block-en.png" alt="Dialogue block" width="560">
+</p>
+
+- Press `Enter` to finish the block.
+- Press `Shift+Enter` to add a line break inside it.
+- Click the block at any time to edit it again.
+
+The block is automatically converted to MiniMax's recommended dialogue format
+`<d>...</d>` when the prompt is sent. The rest of the prompt stays ordinary
+prompt text, so users can describe the scene naturally without learning the
+underlying markup.
+
+## Nodes and connections
+
+### MiniMax H3 Easy Loader
+
+The four-in-one loader exposes separate choices for:
+
+- FL2VA model;
+- Ref2VA model;
+- Qwen3-VL text encoder;
+- video VAE;
+- audio VAE.
+
+Official and common community filename variants are recognized, including
+BF16, FP8, INT8, INT4, NVFP4, NF4, and GGUF releases.
+
+### MiniMax H3 Easy
+
+This is the main generation node. It outputs:
+
+- `Model` — connect this to a model-only LoRA, Sage Attention patch, or directly
+  to the sampler;
+- `H3 Context` — connect this to **MiniMax H3 Easy Output**.
+
+### MiniMax H3 Easy Output
+
+This node expands `H3 Context` into the standard workflow outputs:
+
+- Conditioning;
+- Latent;
+- Video VAE;
+- Audio VAE;
+- FPS.
+
+The sampler, acceleration nodes, video/audio processing, and save nodes remain
+outside the main node so the workflow stays compatible with the rest of
+ComfyUI.
+
+## Modes
+
+### I2V or First/Last Frame
+
+- No media connected: text-to-video.
+- One image connected: image-to-video.
+- Two images connected: first/last-frame generation.
+- Video and audio links are not accepted in this mode.
+
+### Reference Video
+
+- Up to nine reference images, three reference videos, and three standalone
+  audio clips.
+- The `@` editor is enabled.
+- Reference order and prompt references are kept synchronized automatically.
+
+## Parameter design
+
+### Resolution and aspect ratio
+
+Resolution presets follow the MiniMax H3/ComfyUI megapixel-style budgets:
+
+`360P`, `416P`, `480P`, `540P`, `640P`, `720P`, `768P`, `832P`, `928P`,
+`1024P`, `1080P`, and `Custom`.
+
+Presets calculate the canvas from the selected aspect ratio and align the final
+dimensions to multiples of 32. Available ratios are `1:1`, `2:3`, `3:2`, `3:4`,
+`4:3`, `9:16`, `16:9`, and `21:9`.
+
+Selecting `Custom` reveals width and height and hides the aspect-ratio control.
+Custom width and height must be multiples of 32.
+
+### Seconds and FPS
+
+Duration is set in seconds from **4 to 20**. FPS can be adjusted from **1 to
+120** when Advanced options are enabled. The requested duration is aligned to
+MiniMax H3's frame rules internally.
+
+### Advanced options
+
+Advanced options are off by default. When enabled, they reveal:
+
+- FPS;
+- first/last-frame setup in I2V or First/Last Frame mode;
+- reference image size in Reference Video mode;
+- `@` display mode in Reference Video mode.
+
+Reference images use a short-edge limit of **1K** or **2K**. Images below the
+limit keep their original resolution; larger images are resized proportionally
+instead of being forced down to the output video's resolution.
+
+## Installation and models
+
+Install this directory as:
+
+```text
+ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Easy
+```
+
+Place models in the standard folders:
+
+```text
+ComfyUI/models/diffusion_models/
+ComfyUI/models/text_encoders/
+ComfyUI/models/vae/
+```
+
+For `.gguf` transformer or text-encoder files, install
+[ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) and restart ComfyUI.
+GGUF files are routed automatically to their GGUF loader; regular safetensors
+files continue to use native ComfyUI loading.
+
+## License and attribution
+
+This project is released under the [MIT License](LICENSE). 
+
+If you reference, reuse, or adapt a substantial part of this project, please
+credit the original author and mention `ComfyUI-MiniMaxH3-Easy` in your project
+documentation.
+
+Please do not present the project's multi-media input design, `@` reference
+editor, dialogue-block conversion, or related implementation as entirely your
+own work.
+
+## Important notes
+
+- I2V or First/Last Frame mode accepts at most two images.
+- Reference Video mode accepts at most nine images, three videos, and three
+  standalone audio clips.
+- A video's synchronized audio is paired with that video automatically and does
+  not consume a separate audio slot.
+- Image, video, and audio numbering is independent.
+- The node supports both the legacy ComfyUI canvas and Nodes 2.0.
+- Chinese browsers show Chinese parameter labels; other browsers show English
+  labels.
+- Model-only LoRA and attention/acceleration patches connect after the main
+  node's `Model` output.

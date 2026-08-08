@@ -1153,6 +1153,8 @@ function hasScript(node) {
     if (s.shots?.length) return true;
     if (Object.values(s.sections || {}).some((v) => String(v || "").trim())) return true;
     if (s.notRetained?.length || s.taskTypes?.length) return true;
+    // 只配了角色（外观/形象图/音色）也算在用
+    if ((s.characters || []).some((c) => c?.desc?.trim() || c?.identityKey || c?.voiceKey)) return true;
     return Object.values(s.media || {}).some((m) => m?.role);
 }
 

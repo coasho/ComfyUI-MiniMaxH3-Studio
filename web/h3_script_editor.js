@@ -24,15 +24,34 @@ const $ = (tag, cls, txt) => {
     return el;
 };
 
+let idSeq = 0;
+const newId = () => `c${Date.now().toString(36)}${(idSeq++).toString(36)}`;
+
+/**
+ * 一个角色。<Subject N> 与 (SN) 都不存在这里——它们是生成时算出来的，
+ * 因为官方规定这两套编号各按各的顺序走（见 castPlan）。
+ */
+export function blankCharacter(name = "") {
+    return {
+        id: newId(),
+        name,
+        desc: "",            // 外观描述
+        onScreen: true,      // false = 只有声音的旁白，不占 <Subject N>
+        language: "",        // 空 = 跟随全局
+        identityKey: "",     // 形象参考图的 mediaKey
+        voiceKey: "",        // 音色参考音频的 mediaKey
+    };
+}
+
 export function blankScript() {
     return {
         version: GRAMMAR_VERSION,
         duration: 15,
         language: "Chinese",
-        speaker: "少女",
         taskTypes: [],
+        characters: [blankCharacter("少女")],
         sections: {
-            subject_definitions: "", art_style: "", summary: "",
+            art_style: "", summary: "",
             overall_soundscape: "", non_diegetic_music: "",
         },
         notRetained: [],
@@ -48,25 +67,100 @@ function blankShot(cutAt) {
     };
 }
 
-function blankLine() {
+function blankLine(charId = "") {
     return {
-        text: "", delivery: DELIVERY_PRESETS[0], mode: "onscreen",
-        continuity: "complete", voiceRef: "",
+        text: "", charId, delivery: DELIVERY_PRESETS[0], mode: "onscreen",
+        continuity: "complete",
     };
 }
 
-/** 迁移旧剧本：补上后加的字段，避免老工作流打开就报错 */
+/**
+ * 算出每个角色在提示词里的两个身份：
+ *   subject —— <Subject N>，按角色表顺序，只有出镜角色占号
+ *   speaker —— (SN)，按「首次开口顺序」，从不开口的角色不给编号
+ * 官方明确这两套编号互不相干，可能出现 <Subject 2> (S1)。
+ */
+export function castPlan(script) {
+    const plan = {};
+    let subjectN = 0;
+    for (const c of script.characters || []) {
+        const onScreen = c.onScreen !== false;
+        if (onScreen) subjectN++;
+        plan[c.id] = {
+            char: c,
+            subject: onScreen ? subjectN : null,
+            label: onScreen ? `<Subject ${subjectN}>` : (c.name.trim() || "an off-screen voice"),
+            speaker: null,
+        };
+    }
+    let sN = 0;
+    for (const sh of script.shots || []) {
+        for (const ln of sh.lines || []) {
+            if (!ln.text?.trim()) continue;
+            const p = plan[ln.charId];
+            if (p && !p.speaker) p.speaker = `S${++sN}`;
+        }
+    }
+    return plan;
+}
+
+/** 角色在面板上的显示名，带上它会拿到的编号 */
+export function castBadge(p) {
+    const bits = [];
+    if (p.subject) bits.push(`<Subject ${p.subject}>`);
+    if (p.speaker) bits.push(`(${p.speaker})`);
+    return bits.join(" ") || "不出镜且无台词";
+}
+
+/**
+ * 迁移旧剧本：补上后加的字段，避免老工作流打开就报错。
+ * 单角色时代的 speaker / subject_definitions / media 的 identity+timbre 用途
+ * 会折叠成一个角色，台词全部挂到它身上。
+ */
 export function migrateScript(raw) {
     const s = Object.assign(blankScript(), raw || {});
     s.sections = Object.assign(blankScript().sections, s.sections || {});
     s.taskTypes = Array.isArray(s.taskTypes) ? s.taskTypes : [];
     s.notRetained = Array.isArray(s.notRetained) ? s.notRetained : [];
     s.media = s.media || {};
+
+    // 判据必须看 raw：blankScript() 自带一个空角色，看 s 会以为老剧本已经有角色表，
+    // 于是折叠分支永不执行，外观描述和参考图绑定全部无声丢失。
+    if (!Array.isArray(raw?.characters) || !raw.characters.length) {
+        const c = blankCharacter(String(raw?.speaker || "").trim() || "少女");
+        c.desc = String(raw?.sections?.subject_definitions || "").trim();
+        for (const [key, cfg] of Object.entries(s.media)) {
+            if (cfg?.role === "identity" && !c.identityKey) { c.identityKey = key; cfg.role = ""; }
+            if (cfg?.role === "timbre" && !c.voiceKey) { c.voiceKey = key; cfg.role = ""; }
+        }
+        s.characters = [c];
+    }
+    s.characters = s.characters.map((c) => Object.assign(blankCharacter(), c));
+    delete s.speaker;
+    delete s.sections.subject_definitions;
+
+    const first = s.characters[0]?.id || "";
     s.shots = (s.shots || []).map((sh) => Object.assign(blankShot(sh.cutAt || 0), sh, {
-        lines: (sh.lines || []).map((ln) => Object.assign(blankLine(), ln)),
+        lines: (sh.lines || []).map((ln) => {
+            const l = Object.assign(blankLine(), ln);
+            // 老剧本没有 charId；已删角色的台词也回落到第一个角色，别让台词凭空消失
+            if (!l.charId || !s.characters.some((c) => c.id === l.charId)) l.charId = first;
+            delete l.voiceRef;
+            return l;
+        }),
         refs: Array.isArray(sh.refs) ? sh.refs : [],
     }));
     return s;
+}
+
+/** 被角色占用的素材：这些不在「素材用途」里选用途，但保留等级仍可覆盖 */
+export function characterBoundMedia(script) {
+    const out = {};
+    for (const c of script.characters || []) {
+        if (c.identityKey) out[c.identityKey] = { char: c, kind: "image", role: "identity" };
+        if (c.voiceKey) out[c.voiceKey] = { char: c, kind: "audio", role: "timbre" };
+    }
+    return out;
 }
 
 /** 某素材的实际保留等级：用户覆盖优先，否则取用途预设 */
@@ -107,11 +201,34 @@ function dialogueBody(text, continuity) {
 export function assemble(script, mediaTokens = {}) {
     const S = [];
     const media = Object.entries(script.media || {});
+    const plan = castPlan(script);
+    const bound = characterBoundMedia(script);
 
-    /* --- subject_definitions：角色外观 + 画风 + 各素材用途 --- */
+    /* --- subject_definitions：逐角色定义 + 音色绑定 + 画风 + 其余素材用途 --- */
     const subj = [];
-    if (script.sections.subject_definitions?.trim()) {
-        subj.push(`<Subject 1> is ${period(script.sections.subject_definitions.trim())}`);
+    for (const c of script.characters || []) {
+        const p = plan[c.id];
+        const desc = c.desc?.trim();
+        const idToken = mediaTokens[c.identityKey];
+        if (!desc && !idToken && !p.speaker) continue;      // 空壳角色不写进提示词
+        if (p.subject == null) {
+            // 不出镜的声音：别写成有长相的主体，否则模型会把它画出来
+            if (desc) subj.push(period(`${p.label} is an off-screen voice: ${desc}`));
+            else if (p.speaker) subj.push(`${p.label} is an off-screen voice with no visible presence.`);
+            continue;
+        }
+        let line = `${p.label} is ${desc || "the character"}`;
+        if (idToken) line += `${desc ? "," : ""} whose identity and appearance come from ${idToken}`;
+        subj.push(period(line));
+    }
+    // 音色绑定：官方写法把 (SN) 一起带上，模型才知道这条嗓子归谁
+    for (const c of script.characters || []) {
+        const p = plan[c.id];
+        const vToken = mediaTokens[c.voiceKey];
+        // 没台词的角色不写音色绑定：那是条模型用不上的悬空引用，反而可能诱导它开口
+        if (!vToken || !p.speaker) continue;
+        subj.push(`${vToken} is the voice-timbre and delivery reference for ` +
+                  `${p.label} (${p.speaker}); do not reuse its source words.`);
     }
     // 官方没有 art_style 段落，画风并入 subject_definitions 一起发送
     if (script.sections.art_style?.trim()) {
@@ -119,9 +236,9 @@ export function assemble(script, mediaTokens = {}) {
     }
     for (const [key, cfg] of media) {
         const token = mediaTokens[key];
-        if (!token || !cfg?.role) continue;
+        if (!token || !cfg?.role || bound[key]) continue;   // 角色占用的素材已在上面写过
         const role = (MEDIA_ROLES[cfg.kind || "image"] || []).find((r) => r.id === cfg.role);
-        if (role) subj.push(period(role.en(token) + (cfg.note ? ` (${cfg.note})` : "")));
+        if (role && !role.viaCharacter) subj.push(period(role.en(token) + (cfg.note ? ` (${cfg.note})` : "")));
     }
     if (subj.length) S.push("subject_definitions: " + subj.join(" "));
 
@@ -133,15 +250,23 @@ export function assemble(script, mediaTokens = {}) {
         S.push("summary: " + [typeText ? `[${typeText}]` : "", sum].filter(Boolean).join(" "));
     }
 
-    /* --- retention_analysis --- */
+    /* --- retention_analysis：角色占用的素材也要报，否则参考图等于白接 --- */
     const keeps = [];
+    for (const [key, b] of Object.entries(bound)) {
+        const token = mediaTokens[key];
+        if (!token) continue;
+        const level = mediaRetention({ ...b, ...(script.media?.[key] || {}), kind: b.kind, role: b.role });
+        if (level) keeps.push(`${token}: ${level}`);
+    }
     for (const [key, cfg] of media) {
         const token = mediaTokens[key];
-        if (!token || !cfg?.role) continue;
+        if (!token || !cfg?.role || bound[key]) continue;
         const level = mediaRetention(cfg);
         if (level) keeps.push(`${token}: ${level}`);
     }
-    let ret = "retention_analysis: " + (keeps.length ? keeps.join("; ") : "<Subject 1> fully_preserved");
+    const firstSubject = Object.values(plan).find((p) => p.subject === 1);
+    let ret = "retention_analysis: " + (keeps.length ? keeps.join("; ")
+        : `${firstSubject?.label || "<Subject 1>"} fully_preserved`);
     if (script.notRetained?.length) ret += ". NOT retained: " + script.notRetained.join("; ") + ".";
     S.push(ret);
 
@@ -165,10 +290,15 @@ export function assemble(script, mediaTokens = {}) {
         for (const ln of sh.lines) {
             if (!ln.text?.trim()) continue;
             const mode = VOICE_MODES.find((x) => x.id === ln.mode) || VOICE_MODES[0];
-            const who = script.speaker || "the character";
-            bits.push(`${who} (S1) speaks ${mode.en}` +
-                      (ln.delivery ? `, ${ln.delivery}` : "") +
-                      `: <d>[${script.language}] ${dialogueBody(ln.text, ln.continuity)}</d>`);
+            const p = plan[ln.charId];
+            const who = p ? p.label : "the character";
+            const sid = p?.speaker ? ` (${p.speaker})` : "";
+            const vToken = p && mediaTokens[p.char.voiceKey];
+            const lang = p?.char.language?.trim() || script.language;
+            bits.push(`${who}${sid} speaks` +
+                      (vToken ? ` using the voice timbre and delivery referenced from ${vToken},` : "") +
+                      ` ${mode.en}` + (ln.delivery ? `, ${ln.delivery}` : "") +
+                      `: <d>[${lang}] ${dialogueBody(ln.text, ln.continuity)}</d>`);
         }
         body.push(bits.join(" "));
     });
@@ -234,11 +364,52 @@ export function validate(script) {
 
     for (const s of SECTIONS_REF) {
         if (!s.required || s.auto || script.sections[s.key]?.trim()) continue;
-        // 主体定义可以完全交给素材（参考图定角色外观），此时不算缺
-        if (s.key === "subject_definitions" &&
-            Object.values(script.media || {}).some((m) => m?.role)) continue;
         out.push(`「${s.label}」还没填。${s.hint}`);
     }
+    out.push(...castProblems(script));
+    return out;
+}
+
+/** 多角色专属的坑：说话人没指，音色撞车，角色是空壳 */
+export function castProblems(script) {
+    const out = [];
+    const chars = script.characters || [];
+    const plan = castPlan(script);
+    if (!chars.length) return ["还没有角色。至少建一个角色，台词才知道是谁说的。"];
+
+    const byVoice = {};
+    chars.forEach((c, i) => {
+        const who = c.name?.trim() || `第 ${i + 1} 个角色`;
+        if (!c.name?.trim()) out.push(`第 ${i + 1} 个角色还没起名字，台词下拉框里会分不清。`);
+        // 不出镜的旁白本来就没有长相，别拿出镜角色的标准去要求它
+        if (c.onScreen !== false && !c.desc?.trim() && !c.identityKey) {
+            out.push(`角色「${who}」既没有外观描述也没有形象参考图，模型只能瞎编长相。`);
+        }
+        if (c.voiceKey) {
+            (byVoice[c.voiceKey] ||= []).push(who);
+            if (!plan[c.id].speaker) {
+                out.push(`角色「${who}」指定了音色但一句台词都没有，这条音色不会生效。`);
+            }
+        }
+        if (c.onScreen === false && plan[c.id].speaker) {
+            const bad = (script.shots || []).some((sh) =>
+                sh.lines.some((l) => l.charId === c.id && l.text?.trim() && l.mode === "onscreen"));
+            if (bad) out.push(`角色「${who}」标了不出镜，却有台词按「画内说话（露脸）」写，改成画外音或旁白。`);
+        }
+    });
+    for (const [key, names] of Object.entries(byVoice)) {
+        if (names.length > 1) out.push(`同一条音色素材同时绑给了 ${names.join("、")}，两人会是同一把嗓子。`);
+    }
+
+    const ids = new Set(chars.map((c) => c.id));
+    (script.shots || []).forEach((sh, i) => {
+        for (const l of sh.lines) {
+            if (!l.text?.trim()) continue;
+            if (!l.charId || !ids.has(l.charId)) out.push(`镜头 ${i + 1} 有台词没指定说话人。`);
+        }
+    });
+    const speaking = Object.values(plan).filter((p) => p.speaker).length;
+    if (speaking > 4) out.push(`共 ${speaking} 个角色有台词，(S1)…(S${speaking}) 越多越容易串音，建议压到 4 个以内。`);
     return out;
 }
 

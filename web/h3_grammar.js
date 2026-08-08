@@ -121,10 +121,14 @@ export const TASK_TYPES = [
 ];
 
 /* -------------------------------------------------------------- 媒体用途 */
+/**
+ * 素材用途。标 viaCharacter 的两项不在「素材用途」里选——它们要绑到具体角色上，
+ * 由「角色」面板指定，否则多角色时无法区分谁的脸、谁的嗓子。
+ */
 export const MEDIA_ROLES = {
     image: [
-        { id: "identity", label: "角色外观", retention: "fully_preserved",
-          en: (t) => `${t} defines <Subject 1>'s appearance` },
+        { id: "identity", label: "角色形象", retention: "fully_preserved", viaCharacter: true,
+          en: (t) => `${t} defines the character's appearance` },
         { id: "style", label: "画风参考", retention: "weak_reference",
           en: (t) => `${t} defines the rendering style: line weight, shading, palette and saturation` },
         { id: "prop", label: "道具/服装/物件", retention: "partially_preserved",
@@ -139,9 +143,8 @@ export const MEDIA_ROLES = {
           en: (t) => `${t} is fully referenced at the final frame` },
     ],
     audio: [
-        { id: "timbre", label: "音色（说话人）", retention: "reference",
-          en: (t) => `${t} is the voice-timbre reference for <Subject 1> (S1); ` +
-                     `she speaks with its exact timbre, pitch and vocal age throughout` },
+        { id: "timbre", label: "音色（绑定角色）", retention: "reference", viaCharacter: true,
+          en: (t) => `${t} is a voice-timbre reference` },
         { id: "bgm", label: "配乐风格", retention: "reference",
           en: (t) => `${t} defines the style of the non-diegetic music` },
         { id: "ambience", label: "环境音风格", retention: "weak_reference",
@@ -199,11 +202,9 @@ export const DELIVERY_PRESETS = [
 /* ---------------------------------------------------------------- 分段 */
 /** 参考模式六段，顺序为官方规定，不可调换 */
 export const SECTIONS_REF = [
-    // auto 只标「整段由别处拼出来、面板不给输入框」的段落。本段要人写角色外观，
-    // 素材用途只是自动追加在后面，所以不能标 auto——标了输入框就没了。
-    { key: "subject_definitions", label: "主体定义", required: true,
-      hint: "角色外观：发型发色、五官、服装、体型。颜色务必写排除项（NOT orange…），" +
-            "否则模型会往它熟悉的方向飘。上面配好的素材用途会自动追加到本段末尾。" },
+    // 角色外观已改由「角色」面板逐个填写，本段由角色表 + 素材用途整段拼出，不再给输入框
+    { key: "subject_definitions", label: "主体定义", required: true, auto: true,
+      hint: "由「角色」面板与素材用途自动拼装：<Subject N> 编号、音色绑定都在这里生成。" },
     { key: "summary", label: "整体概述", required: true,
       hint: "一段话讲清整体内容、镜头数、风格基调。官方必需段落。" },
     { key: "retention_analysis", label: "保留声明", required: true, auto: true,

@@ -394,6 +394,13 @@ class MiniMaxH3EasyLoader:
         return "|".join(str(kwargs.get(key, "")) for key in ("fl2va_model", "ref2va_model", "text_encoder", "video_vae", "audio_vae"))
 
     def load(self, fl2va_model, ref2va_model, text_encoder, video_vae, audio_vae):
+        # 加载器跑在 MiniMaxH3Easy.generate() 之前。只在 generate 里卸太晚了：
+        # 装载文本编码器和两个 VAE 那一刻，我们的 VLM/音色模型还占着显存。
+        try:
+            from . import vram
+            vram.release_all("H3 开始装载")
+        except Exception:
+            pass
         clip = _load_text_encoder(text_encoder)
         video_vae_obj, = nodes.VAELoader().load_vae(video_vae)
         audio_vae_obj, = nodes.VAELoader().load_vae(audio_vae)
@@ -693,17 +700,14 @@ class MiniMaxH3Easy:
     def generate(cls, h3_bundle, mode, prompt, resolution, aspect_ratio, width, height, seconds, advanced, fps, keyframe_role, ref_image_size, reference_mention_mode, **kwargs):
         if not isinstance(h3_bundle, MiniMaxH3Bundle):
             raise ValueError("Connect a MiniMax H3 Easy Loader bundle")
-        # 反推的 VLM 有 8GB、音色模型有 4GB，跟 H3 抢显存必爆。
-        # 真要生成了就先把它们请出去。
-        for _mod_name, _label in (("caption", "图生文反推"), ("voice", "音色")):
-            try:
-                _m = __import__(f"{__package__}.{_mod_name}", fromlist=[_mod_name])
-                _unload = getattr(_m, "unload_caption_models", None) \
-                    or getattr(_m, "unload_voice_models", None)
-                if _unload and _unload():
-                    print(f"[MiniMaxH3-Studio] 已卸载{_label}模型，让出显存给 H3")
-            except Exception:
-                pass
+        # 反推的 VLM 8.4GB、音色模型 4GB，跟 H3 抢显存必爆。
+        # 主力挂点在 vram.install() 包的 free_memory 上（ComfyUI 任何时候要
+        # 显存都会经过那里）；这里再兜一次，防止显存调度没接上。
+        try:
+            from . import vram
+            vram.release_all("H3 开始生成")
+        except Exception:
+            pass
         mode = str(mode)
         keyframe_role = KEYFRAME_LAST if str(keyframe_role) == KEYFRAME_LAST else KEYFRAME_FIRST
         width, height = _canvas_dimensions(resolution, aspect_ratio, width, height)

@@ -180,14 +180,15 @@ def voices_dir() -> str:
 # ------------------------------------------------------------------ 模型
 
 def _unload_locked():
-    if _models:
-        _models.clear()
+    if not _models:
+        return
+    # 同样不要 .to("cpu")：那是把显存搬进内存，不是释放
+    _models.clear()
+    try:
+        from . import vram
+        vram._hard_collect()
+    except Exception:
         gc.collect()
-        try:
-            import torch
-            torch.cuda.empty_cache()
-        except Exception:
-            pass
 
 
 def unload_voice_models():
@@ -208,7 +209,7 @@ def _start_reaper():
         while True:
             time.sleep(30)
             with _lock:
-                if _models and time.time() - _touched > 600:
+                if _models and time.time() - _touched > 120:
                     print("[MiniMaxH3-Studio] 音色模型空闲，卸载让出显存")
                     _unload_locked()
 

@@ -94,7 +94,7 @@ DEFAULT_SETTINGS = {
     "openai_base_url": "http://127.0.0.1:11434/v1",
     "openai_model": "qwen2.5vl:7b",
     "openai_api_key": "",
-    "keep_loaded_seconds": 600,
+    "keep_loaded_seconds": 120,
 }
 
 
@@ -316,13 +316,14 @@ def _unload_qwen_locked():
     global _qwen
     if _qwen is None:
         return
+    # 千万别 .to("cpu") —— 实测那会把 8GB 权重从显存搬进内存然后留在那里，
+    # 显存是放了，RSS 反涨 7GB，正是撑死 ComfyUI 的那部分。直接丢引用即可。
     _qwen = None
-    gc.collect()
     try:
-        import torch
-        torch.cuda.empty_cache()
+        from . import vram
+        vram._hard_collect()
     except Exception:
-        pass
+        gc.collect()
 
 
 def unload_caption_models():
@@ -346,7 +347,7 @@ def _start_reaper():
     def loop():
         while True:
             time.sleep(30)
-            keep = load_settings().get("keep_loaded_seconds", 600)
+            keep = load_settings().get("keep_loaded_seconds", 120)
             if not keep or keep <= 0:
                 continue
             with _lock:

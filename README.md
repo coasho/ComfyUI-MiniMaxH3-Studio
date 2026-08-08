@@ -1,212 +1,166 @@
-# ComfyUI-MiniMaxH3-Easy
+# ComfyUI-MiniMaxH3-Studio
 
-[中文说明 / Chinese documentation](README_CN.md)
+给 MiniMax H3 用的剧本编辑器：把官方那套六段式语法藏起来，只让人填内容。
+在 `MiniMax H3 Easy` 节点上多一个 **📝 编辑剧本** 按钮，点开就是全部功能。
 
-`ComfyUI-MiniMaxH3-Easy` integrates MiniMax H3 text-to-video, image-to-video,
-and reference-to-video generation into one streamlined ComfyUI workflow surface.
-The interaction layer has been deliberately polished to make media input,
-reference selection, and prompt editing simple to understand and quick to use.
+编号、时间码、`<d>` 标签、保留声明、官方绑定句，全部在生成时自动拼出来。
 
-The idea is simple: keep the power of ComfyUI, while removing the repetitive
-media wiring and reference bookkeeping that normally make MiniMax H3 workflows
-hard to read and harder to learn.
+---
 
-## Highlights
+## 一、实体模型
 
-### One `Media` input for mixed media
+**官方的 `<Subject N>` 不只是「角色」。** 它是任意可复用的声明实体，
+官方的 visible content type 全集是：
 
-The main node uses one visible `Media` input for images, videos, and audio.
-Multiple links can enter the same port. Image, video, and audio order numbers
-are tracked independently, and each media type has its own wire color and
-preview style.
+| 类型 | 官方短语 | 默认保留等级 |
+|---|---|---|
+| 人物 | `identity and appearance` | fully_preserved |
+| 物件 / 服装 / 道具 | `visible object appearance` | fully_preserved |
+| 场景 / 环境 | `scene and environment` | fully_preserved |
+| 动作 / 姿态 | `pose and movement` | **attribute_transfer**（必须指定迁移目标）|
+| 画风 | `visual style` | weak_reference |
+| 画外音 | 无（不占 Subject 编号）| — |
 
-<p align="center">
-  <img src="images/mixed-media-input-en.png" alt="Mixed media input" width="560">
-</p>
+绑定句模板：`The {短语} of <Subject 1> {is|are} defined by <Picture 1>.`
+**一个实体可以绑多个素材**（正面图 + 侧面图 + 服装细节各一张）。
 
-This keeps the graph compact without losing ordering information. Drag from
-`Media` to an empty area of the canvas to quickly create a compatible media
-node. Click the number in the middle of a virtual media wire to open the small
-delete menu.
+### 两套编号互不相干
 
-<p align="center">
-  <img src="images/quick-create-node-en.png" alt="Quick-create media node" width="460">
-</p>
+- `<Subject N>` 按**实体表顺序**编号，只有「出现在画面里」的占号
+- `(S1)(S2)` 按**首次开口顺序**编号，**从不开口的实体不给编号**
 
-### A complete `@` reference editor
+所以完全可能出现 `<Subject 2> (S1)`。卡片右上角实时显示实际会发出去的编号。
 
-`@` is available in **Reference Video** mode. Type `@` to select a connected
-image, video, or standalone audio resource. The popup presents images first,
-videos second, and audio last, with a preview for each item.
+### 常见场景怎么表达
 
-<p align="center">
-  <img src="images/mention-popup-en.png" alt="Reference popup" width="320">
-</p>
+| 想做的事 | 怎么做 |
+|---|---|
+| 多角色对话 | 建多个「人物」实体，台词卡上选说话人 |
+| 每个角色不同音色 | 每个实体各绑各的音色素材 |
+| 中途换衣服 | 建两个「物件」实体，在分镜的**变更**里写「A 脱下 校服」「A 穿上 红外套」 |
+| A 把东西交给 B | 变更选「交给」，三个槽：谁 / 什么 / 给谁 |
+| 千奇百怪的变化 | 变更选「自定义」，自己写一句，里面照样能 `@` 引用实体 |
+| 没有人物，只有物件/景色 | 只建物件和场景实体，一句台词不写。校验不会报错 |
+| 角色说日语、另一个说中文 | 每个实体单独设语言，`<d>[Lang]` 逐句按实体发送 |
 
-<p align="center">
-  <img src="images/reference-editor-en.png" alt="Reference editor" width="720">
-</p>
+### `@` 引用
 
-References use **By index** by default because it is concise and easy to scan.
-**By filename** is available when the filename itself is more meaningful.
+画面描述、变更、概述、环境音里都能写 `@实体名`，生成时替换成 `<Subject N>`。
+输入框下方**实时显示解析结果**，引用不到的实体标红并进校验。
+下面一排芯片可以点着在光标处插入。
 
-The chips are an editing interface only. When the workflow runs, the node
-automatically converts them into the reference format recommended by MiniMax,
-including `<Picture N>`, `<Video N>`, and `<Audio N>`. Users do not need to
-manually write or maintain those tags.
+---
 
-A video's synchronized soundtrack is handled together with that video. A
-standalone audio input remains an independent reference, so users only need to
-connect the media they actually want to use.
+## 二、图生文反推（🔍 反推描述）
 
-### Simple dialogue blocks
+准备好参考图后不用再手写外观特征。实体卡上每条素材绑定旁边点一下。
 
-Type `#` in the prompt editor to insert an editable dialogue block.
+两个模型协作，**不是二选一**：
 
-<p align="center">
-  <img src="images/dialogue-block-en.png" alt="Dialogue block" width="560">
-</p>
+| 模型 | 体积 | 职责 |
+|---|---|---|
+| `SmilingWolf/wd-eva02-large-tagger-v3` | 1.2 GB ONNX | 二次元离散属性抽取（v3 系列 F1 最高 0.4772）|
+| `Qwen/Qwen3-VL-4B-Instruct` | 8.3 GB bf16 | 成句描述，写实与二次元通用 |
 
-- Press `Enter` to finish the block.
-- Press `Shift+Enter` to add a line break inside it.
-- Click the block at any time to edit it again.
+二次元图先用 WD14 抽标签当**事实依据**喂给 VLM，并明确告诉它标签在发色瞳色
+服饰上比自己看的准。写实照片关掉标签直接走 VLM。
 
-The block is automatically converted to MiniMax's recommended dialogue format
-`<d>...</d>` when the prompt is sent. The rest of the prompt stays ordinary
-prompt text, so users can describe the scene naturally without learning the
-underlying markup.
+第三个后端是 **OpenAI 兼容接口**（Ollama / LM Studio / 云 API），零下载，
+想换更强的模型直接在弹窗里填 URL。
 
-## Nodes and connections
+### 设定稿版式会被自动挑出来
 
-### MiniMax H3 Easy Loader
+WD14 会同时抓到 `multiple views / turnaround / white background / spread arms`
+这类**版式标签**。它们描述的是「这是一张设定稿」而不是角色长什么样，混进
+描述会被 H3 当画面内容照搬（三视图白底和张臂站姿被搬进成片是真实发生过的）。
 
-The four-in-one loader exposes separate choices for:
+这些会被分离出来转成中文的**「不保留」候选**，反推完直接勾选加进剧本。
+视角类标签只在**确认是设定稿时**才建议丢弃——单张侧脸特写里的 `profile`
+是真实构图，不该误删。
 
-- FL2VA model;
-- Ref2VA model;
-- Qwen3-VL text encoder;
-- video VAE;
-- audio VAE.
+### 颜色排除项是本地补全的
 
-Official and common community filename variants are recognized, including
-BF16, FP8, INT8, INT4, NVFP4, NF4, and GGUF releases.
+H3 要求每个颜色都写明不许漂向哪个邻近色，否则黑发会飘成橙发。
+实测 Qwen3-VL-4B 做不到：同一版指令下覆盖率在 **0% / 25% / 62%** 之间乱跳。
+所以让 VLM 只负责看，排除项由本地按固定对照表确定性补齐（可在弹窗里关掉）。
 
-### MiniMax H3 Easy
+中文用括号形式：`浅棕色（不是红棕）长发`——逗号形式的
+「浅棕色，不是红棕长发」会被读成「不是红棕长发」，意思正好反了。
 
-This is the main generation node. It outputs:
+---
 
-- `Model` — connect this to a model-only LoRA, Sage Attention patch, or directly
-  to the sampler;
-- `H3 Context` — connect this to **MiniMax H3 Easy Output**.
+## 三、音色生成（🎙 做音色）
 
-### MiniMax H3 Easy Output
+**「大妈声」的根因是没得挑，不是模型烂。** VoiceDesign 是随机采样，
+同一段描述换个 seed 音色差很远（实测组内相似度 0.989，确实在飘）。
+所以核心是**一次出多条候选并排试听**。
 
-This node expands `H3 Context` into the standard workflow outputs:
+| 来源 | 需要模型 | 说明 |
+|---|---|---|
+| 描述生成 | `Qwen3-TTS-12Hz-1.7B-VoiceDesign` 4.3 GB | 自由描述嗓音，随机采样，所以要多出几条挑 |
+| 克隆参考音频 | `Qwen3-TTS-12Hz-1.7B-Base` 4.2 GB | `x_vector_only` 从参考音频提音色向量复刻，不靠抽卡 |
 
-- Conditioning;
-- Latent;
-- Video VAE;
-- Audio VAE;
-- FPS.
+**不用 CustomVoice**（Vivian 那套固定预设），实测就是「大妈声」的来源。
 
-The sampler, acceleration nodes, video/audio processing, and save nodes remain
-outside the main node so the workflow stays compatible with the rest of
-ComfyUI.
+实测音色一致性（MFCC 余弦）：描述生成组内 0.989，克隆组内 0.997，
+克隆跨参考 0.980 —— 克隆更稳，且参考确实决定音色。
+（该指标在短片段上往 1.0 饱和，动态范围窄，以听感为准。）
 
-## Modes
+- **试听文本默认取该实体在剧本里的第一句真实台词**，听到的就是成片会说的那句
+- 选中的音色落盘到 `input/h3voice_*.wav`，跨剧本复用、跨进程持久化
+- 选中后**自动在图里建 `LoadAudio`、填好文件名、登记成 media、绑给该实体**，
+  不用手工连线；同一文件重复选会复用已有节点
 
-### I2V or First/Last Frame
+> 音色文件必须放 `input/` **根目录**：`LoadAudio` 用 `os.listdir(input_dir)`
+> 列文件，不递归，放子目录下拉框根本选不到。
 
-- No media connected: text-to-video.
-- One image connected: image-to-video.
-- Two images connected: first/last-frame generation.
-- Video and audio links are not accepted in this mode.
+---
 
-### Reference Video
+## 四、显存
 
-- Up to nine reference images, three reference videos, and three standalone
-  audio clips.
-- The `@` editor is enabled.
-- Reference order and prompt references are kept synchronized automatically.
+反推的 VLM 8 GB、音色模型 4 GB，跟 H3 抢显存必爆。所以：
 
-## Parameter design
+- `MiniMaxH3Easy.generate()` 开头先把两个都卸掉
+- 各有一个空闲 10 分钟自动卸载的守护线程
 
-### Resolution and aspect ratio
+16 GB 卡实测峰值：反推 8.78 GB，音色 4.09 GB。
 
-Resolution presets follow the MiniMax H3/ComfyUI megapixel-style budgets:
+---
 
-`360P`, `416P`, `480P`, `540P`, `640P`, `720P`, `768P`, `832P`, `928P`,
-`1024P`, `1080P`, and `Custom`.
+## 五、非官方项
 
-Presets calculate the canvas from the selected aspect ratio and align the final
-dimensions to multiples of 32. Available ratios are `1:1`, `2:3`, `3:2`, `3:4`,
-`4:3`, `9:16`, `16:9`, and `21:9`.
+面板上标「非官方」的字段，官方**没有**对应受控词表，只作为普通英文写进描述：
 
-Selecting `Custom` reveals width and height and hides the aspect-ratio control.
-Custom width and height must be multiples of 32.
+- **景别**（特写 / 中景 / 远景…）
+- **机位角度**（平视 / 仰拍 / 荷兰角…）
 
-### Seconds and FPS
+官方也**没有**「广角」「微距」这类镜头焦段词。
+运镜 / 幅度 / 速度是官方词表，且**幅度与速度官方只有两档**（small/large、slow/fast）。
 
-Duration is set in seconds from **4 to 20**. FPS can be adjusted from **1 to
-120** when Advanced options are enabled. The requested duration is aligned to
-MiniMax H3's frame rules internally.
+---
 
-### Advanced options
+## 六、文件
 
-Advanced options are off by default. When enabled, they reveal:
+| 文件 | 作用 |
+|---|---|
+| `nodes.py` | 三个节点：Loader / Easy / Output |
+| `caption.py` | 图生文反推的 HTTP 端点与后端 |
+| `voice.py` | 音色生成的 HTTP 端点与后端 |
+| `web/h3_grammar.js` | **语法 schema，唯一事实来源**。扩展语法只改这里 |
+| `web/h3_script_editor.js` | 数据模型 + 提示词拼装 + 校验 + 版本迁移 |
+| `web/h3_script_modal.js` | 编辑器弹窗 |
+| `web/h3_caption.js` | 反推弹窗 |
+| `web/h3_voice.js` | 音色工作台弹窗 |
 
-- FPS;
-- first/last-frame setup in I2V or First/Last Frame mode;
-- reference image size in Reference Video mode;
-- `@` display mode in Reference Video mode.
+### 设计原则
 
-Reference images use a short-edge limit of **1K** or **2K**. Images below the
-limit keep their original resolution; larger images are resized proportionally
-instead of being forced down to the output video's resolution.
+**结构只用在 H3 语法要求机器精确的地方**——Subject/Speaker 编号、时间码、
+`<d>` 标签、保留声明、官方绑定句。其余一律是散文 + `@` 实体引用。
 
-## Installation and models
+v2 恰好搞反了：把景别语气这些散文结构化成下拉框，却把真正要算的编号写死，
+于是衣服、道具、纯景色片全都表达不了。
 
-Install this directory as:
+### 剧本版本迁移
 
-```text
-ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Easy
-```
-
-Place models in the standard folders:
-
-```text
-ComfyUI/models/diffusion_models/
-ComfyUI/models/text_encoders/
-ComfyUI/models/vae/
-```
-
-For `.gguf` transformer or text-encoder files, install
-[ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) and restart ComfyUI.
-GGUF files are routed automatically to their GGUF loader; regular safetensors
-files continue to use native ComfyUI loading.
-
-## License and attribution
-
-This project is released under the [MIT License](LICENSE). 
-
-If you reference, reuse, or adapt a substantial part of this project, please
-credit the original author and mention `ComfyUI-MiniMaxH3-Easy` in your project
-documentation.
-
-Please do not present the project's multi-media input design, `@` reference
-editor, dialogue-block conversion, or related implementation as entirely your
-own work.
-
-## Important notes
-
-- I2V or First/Last Frame mode accepts at most two images.
-- Reference Video mode accepts at most nine images, three videos, and three
-  standalone audio clips.
-- A video's synchronized audio is paired with that video automatically and does
-  not consume a separate audio slot.
-- Image, video, and audio numbering is independent.
-- The node supports both the legacy ComfyUI canvas and Nodes 2.0.
-- Chinese browsers show Chinese parameter labels; other browsers show English
-  labels.
-- Model-only LoRA and attention/acceleration patches connect after the main
-  node's `Model` output.
+`v1（单角色 speaker）→ v2（角色表）→ v3（实体模型）` 全通。
+`assemble()` 内部兜底迁移，没打开过编辑器直接点生成也不会出错。

@@ -8,6 +8,8 @@
  * 试听文本默认取该实体在剧本里的第一句真实台词，听到的就是成片里会说的那句。
  */
 
+import { httpHint } from "./h3_api.js";
+
 const API = "/minimax_h3_studio/voice";
 
 /** 音色模型 4GB，关掉工作台就还回去，别等空闲计时器 */
@@ -27,8 +29,8 @@ async function post(path, body) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     });
-    const d = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
-    if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    const d = await r.json().catch(() => ({ ok: false, error: httpHint(r.status, path) }));
+    if (!r.ok || !d.ok) throw new Error(d.error || httpHint(r.status, path));
     return d;
 }
 

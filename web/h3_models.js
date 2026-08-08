@@ -8,6 +8,8 @@
  * 后端是 download_models.py，前端只负责显示和轮询。
  */
 
+import { httpHint } from "./h3_api.js";
+
 const API = "/minimax_h3_studio/models";
 
 export async function modelStatus() {
@@ -22,8 +24,8 @@ async function post(path, body) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body || {}),
     });
-    const d = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
-    if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    const d = await r.json().catch(() => ({ ok: false, error: httpHint(r.status, API + path) }));
+    if (!r.ok || !d.ok) throw new Error(d.error || httpHint(r.status, API + path));
     return d;
 }
 

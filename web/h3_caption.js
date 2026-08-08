@@ -5,6 +5,8 @@
  * 图片在浏览器里先缩到 1024 长边再发，省得把几 MB 的原图丢给后端。
  */
 
+import { httpHint } from "./h3_api.js";
+
 const API = "/minimax_h3_studio/caption";
 const MAX_SIDE = 1024;
 
@@ -44,13 +46,14 @@ export async function imageToDataUrl(url) {
  */
 export async function translateLines(lines) {
     if (!lines.length) return {};
-    const r = await fetch("/minimax_h3_studio/translate", {
+    const url = "/minimax_h3_studio/translate";
+    const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lines }),
     });
-    const d = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
-    if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    const d = await r.json().catch(() => ({ ok: false, error: httpHint(r.status, url) }));
+    if (!r.ok || !d.ok) throw new Error(d.error || httpHint(r.status, url));
     const map = {};
     lines.forEach((src, i) => { if (d.lines[i]) map[src] = d.lines[i]; });
     return map;
@@ -78,8 +81,8 @@ async function runCaption(body) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     });
-    const data = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
-    if (!r.ok || !data.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    const data = await r.json().catch(() => ({ ok: false, error: httpHint(r.status, API) }));
+    if (!r.ok || !data.ok) throw new Error(data.error || httpHint(r.status, API));
     return data;
 }
 

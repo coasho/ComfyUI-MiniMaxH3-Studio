@@ -1,193 +1,287 @@
-# ComfyUI-MiniMaxH3-Easy 中文说明
+# ComfyUI-MiniMaxH3-Studio
 
 [English README](README.md)
 
-`ComfyUI-MiniMaxH3-Easy` 将 MiniMax H3 的文生视频、图生视频和参考生视频整合到一套
-简洁的 ComfyUI 工作流中。交互层经过专门打磨，让媒体输入、参考素材选择和提示词编辑
-都更加直观、简单、顺手。
+给 MiniMax H3 用的剧本编辑器：把官方那套六段式参考语法藏起来，只让人填内容。
+在 `MiniMax H3 Easy` 节点上多一个 **📝 编辑剧本** 按钮，点开就是全部功能。
 
-它的目标不是把 ComfyUI 变成黑盒，而是把重复的媒体连线、素材排序和参考引用管理
-交给节点处理，让用户把注意力放在提示词和创作本身，同时保留 LoRA、采样器、保存
-节点等标准 ComfyUI 组件的自由组合能力。
+编号、时间码、`<d>` 标签、保留声明、官方绑定句，全部在保存时自动拼出来。
 
-## 核心卖点
-
-### 多种媒体共用一个 `Media` 输入
-
-主节点只暴露一个可排序的 `Media` 输入。图片、视频、音频都可以接入同一个端点，
-不需要为每一种媒体准备一排输入口。
-
-图片、视频、音频仍然各自保持独立的顺序和编号，前端会使用不同颜色的连线、缩略图
-和序号帮助区分。
+另外还带上了新装一次最容易卡住的两样东西：**一键下载全部模型**，以及
+**只用 ComfyUI 核心节点的示例工作流**。
 
 <p align="center">
-  <img src="images/mixed-media-input-zh.png" alt="多线输入" width="560">
+  <img src="images/reference-editor-zh.png" alt="图片、视频、音频共用一个 Media 输入" width="720">
 </p>
 
-从 `Media` 输入端拖线到空白画布，会弹出快速创建菜单，可以直接创建对应的资源节点。
-点击虚拟连线中间的序号，会打开只有“删除”选项的小菜单。
+<sup>图片、视频、音频共用一个可排序的 `Media` 输入，提示词里用 `@名字` 直接引用。
+剧本编辑器就架在这套素材机制上。</sup>
 
-<p align="center">
-  <img src="images/quick-create-node-zh.png" alt="快速创建媒体节点" width="460">
-</p>
+---
 
-### 完整的 `@` 参考素材编辑器
+## 安装
 
-在 **参考生视频** 模式中，在提示词里输入 `@` 即可选择已连接的图片、视频或独立音频。
-弹窗按照图片、视频、音频的顺序显示，并提供预览，方便快速辨认素材。
-
-<p align="center">
-  <img src="images/mention-popup-zh.png" alt="引用素材弹窗" width="320">
-</p>
-
-<p align="center">
-  <img src="images/reference-editor-zh.png" alt="参考模式中的整体效果" width="720">
-</p>
-
-默认使用**按序号**引用，因为显示更简洁；用户也可以切换为**按文件名**，在文件名
-本身更有辨识度时使用。
-
-编辑器中的芯片只是方便用户编辑的显示形式。真正执行工作流时，节点会自动把引用转换成MiniMax 官方推荐的提示词格式，包括 `<Picture N>`、`<Video N>` 和 `<Audio N>`，用户不需要手动书写或维护这些标签。
-
-用户也不需要手动拆分视频音轨。视频自带的同步音轨会自动和对应视频配对；单独接入的音频则作为独立参考处理。
-
-### 简洁的台词块
-
-在提示词编辑器中输入 `#`，即可创建可编辑的台词块。
-
-<p align="center">
-  <img src="images/dialogue-block-zh.png" alt="台词块" width="560">
-</p>
-
-- `Enter`：结束当前台词块；
-- `Shift+Enter`：在台词块内部换行；
-- 可以随时点击台词块重新编辑。
-
-台词块在执行时会自动转换成 MiniMax 官方推荐的 `<d>...</d>` 台词格式。台词块之外仍然是普通提示词文本，用户可以自然地描述画面，不需要理解底层标签。
-
-## 节点和连接方式
-
-### MiniMax H3 Easy Loader
-
-四合一加载器，分别选择：
-
-- FL2VA 主模型；
-- Ref2VA 主模型；
-- Qwen3-VL 文本编码器；
-- 视频 VAE；
-- 音频 VAE。
-
-官方和常见社区模型命名都可以识别，包括 BF16、FP8、INT8、INT4、NVFP4、NF4 和 GGUF等版本。
-
-### MiniMax H3 Easy
-
-这是整套节点的主要操作入口，输出两个端口：
-
-- `Model`：可以直接连接采样器，也可以先连接模型专用 LoRA、Sage Attention 或其他模型补丁；
-- `H3 Context`：连接到 **MiniMax H3 Easy Output**。
-
-### MiniMax H3 Easy Output
-
-把 `H3 Context` 展开成标准 ComfyUI 工作流需要的：
-
-- Conditioning；
-- Latent；
-- Video VAE；
-- Audio VAE；
-- FPS。
-
-采样器、加速节点、视频/音频处理和保存节点仍然放在外部，方便继续使用 ComfyUI 生态中的其他节点。
-
-## 模式
-
-### 图生或首尾帧
-
-- 不连接媒体：文生视频；
-- 连接一张图片：图生视频；
-- 连接两张图片：首尾帧生成；
-- 此模式不接受视频和音频输入。
-
-### 参考生视频
-
-- 最多九张参考图片、三条参考视频和三条独立音频；
-- 启用 `@` 编辑器；
-- 引用顺序和提示词中的素材对应关系自动维护。
-
-## 参数设计逻辑
-
-### 分辨率和宽高比
-
-分辨率预设采用 MiniMax H3/ComfyUI 的 megapixel 预算逻辑：
-
-`360P`、`416P`、`480P`、`540P`、`640P`、`720P`、`768P`、`832P`、`928P`、`1024P`、
-`1080P` 和 `Custom`。
-
-选择预设时，节点根据宽高比计算画布尺寸，并自动对齐到 32 的倍数。可选比例包括：
-`1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9` 和 `21:9`。
-
-选择 `Custom` 后才显示宽高输入，同时隐藏宽高比选项。自定义宽高必须是 32 的倍数。
-
-### 秒数和 FPS
-
-时长使用秒数表示，范围为 **4～20 秒**。开启高级选项后，可以设置 **1～120 FPS**。
-
-### 高级选项
-
-高级选项默认关闭。开启后显示：
-
-- FPS；
-- 图生或首尾帧模式下的首尾帧设置；
-- 参考生视频模式下的参考图尺寸；
-- 参考生视频模式下 `@` 的按文件名/按序号显示方式。
-
-参考图尺寸使用短边上限：
-
-- **短边最大 1K 像素**；
-- **短边最大 2K 像素**。
-
-图片小于上限时保留原始分辨率；超过上限时保持原比例缩小，不会为了生成 480P 视频就把参考图也压到 480P。
-
-首尾帧设置只在图生或首尾帧模式显示：
-
-- **首帧优先**：一张图作为首帧；两张图按首帧、尾帧顺序处理；
-- **尾帧优先**：一张图作为尾帧；两张图按尾帧、首帧顺序处理。
-
-## 安装和模型
-
-将本节点放入：
-
-```text
-ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Easy
+```bash
+git clone https://github.com/nkxx188/ComfyUI-MiniMaxH3-Studio.git
 ```
 
-模型放入：
+克隆到 `ComfyUI/custom_nodes/` 下，装一下可选依赖，然后重启：
 
-```text
-ComfyUI/models/diffusion_models/
-ComfyUI/models/text_encoders/
-ComfyUI/models/vae/
+```bash
+pip install -r ComfyUI-MiniMaxH3-Studio/requirements.txt
 ```
 
-加载器会识别官方和常见社区命名，包括大小写、短横线/下划线、`FL2VA`/`FL2V`、
-`Ref2VA`/`Ref2V`、Qwen3-VL 变体，以及常见量化版本。
+三个节点本身不需要 ComfyUI 自带之外的任何东西。`requirements.txt` 只服务于编辑器的
+可选功能（反推、音色）——缺哪个就是哪个功能报一句话，节点照常工作。
 
-如果使用 `.gguf` 主模型或文本编码器，请额外安装[ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) 并重启 ComfyUI。普通 safetensors无需额外后端。
+**强烈建议 ComfyUI ≥ `bdcb886`（2026-08-06 nightly）。** 那个提交加入了原生的
+MiniMax-H3 音画流采样（`ModelSamplingAV`）；在此之前用 4 步 Turbo LoRA，声音会严重破音。
+示例工作流是按 Turbo LoRA 配的。
 
-## 开源协议和署名
+音色生成还需要另外装 [ComfyUI-Qwen3-TTS](https://github.com/lrzjason/ComfyUI-Qwen3-TTS)，
+本包驱动的是它的 TTS 节点类。
 
-本项目采用 [MIT 协议](LICENSE) 发布。
+---
 
-如果参考、复用或改写本项目的较大部分代码，需在项目文档中注明原作者和
-`ComfyUI-MiniMaxH3-Easy` 项目。
+## 一键下载模型
 
-请不要将本项目的多媒体单输入设计、`@` 参考编辑器、台词块转换机制或相关实现完整描述为你自己的原创工作。
+H3 的权重分散在三个 HuggingFace 仓库里，名字几乎一模一样，跑起来前要凑齐六个文件。
+别手抄链接。
 
-## 注意事项
+打开 **MiniMax H3 加载器** 节点，点 **⬇ 下载模型**：有什么、缺什么、还差多少字节，
+一目了然。反推弹窗和音色工作台在模型缺失时也会出现同一个按钮。
 
-- 图生或首尾帧模式最多连接两张图片；
-- 参考生视频模式最多九张图片、三条视频和三条独立音频；
-- 视频自带同步音轨会自动和视频配对，不占用独立音频数量；
-- 图片、视频、音频的序号分别独立；
-- 模型专用 LoRA 和注意力/加速补丁连接在主节点的 `Model` 输出之后；
-- 同时兼容 ComfyUI 旧画布和 Nodes 2.0；
-- 中文浏览器显示中文参数标签，非中文浏览器显示英文参数标签。
+也可以不开 ComfyUI，直接在终端跑：
+
+```bash
+python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --list
+```
+
+```bash
+python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --required
+```
+
+| id | 必需 | 体积 | 落到哪 |
+|---|---|---|---|
+| `h3_ref2va` | ✔ | 19.5 GB | `models/diffusion_models/` |
+| `h3_fl2va` | ✔ | 19.5 GB | `models/diffusion_models/` |
+| `h3_text_encoder` | ✔ | 14.6 GB | `models/text_encoders/` |
+| `h3_text_encoder_int8` | — | 25.3 GB | 非 50 系显卡的备选 |
+| `h3_vae` | ✔ | 5.4 GB | `models/vae/`（视频 + 音频两个）|
+| `h3_turbo_lora` | ✔ | 592 MB | `models/loras/` |
+| `qwen3vl_caption` | — | 8.3 GB | `models/LLM/Qwen3-VL-4B-Instruct/` |
+| `wd14_tagger` | — | 1.2 GB | 装了 `comfyui-wd14-tagger` 就复用它的 models 目录 |
+| `tts_voicedesign` | — | 4.2 GB | `models/TTS/Qwen/…-VoiceDesign/` |
+| `tts_base` | — | 4.2 GB | `models/TTS/Qwen/…-Base/` |
+
+几个实际会救命的细节：
+
+- **断点续传。** 下载写在目标旁边的 `.part` 上，从上次断的位置接着下——取消、关
+  ComfyUI、断网都行。`huggingface_hub` 的 `snapshot_download(local_dir=…)` 在 Xet
+  存储上没有断点，杀掉进程几个 GB 全丢，所以这里用裸 `Range` 请求配自己的读超时。
+- **不存第二份。** 直接落到 ComfyUI 的 models 目录，不经过 `~/.cache/huggingface`。
+- **镜像。** 设 `HF_ENDPOINT=https://hf-mirror.com` 就走镜像。
+- **校验。** `.safetensors` 要先过自己的头部校验才改名到位，半个文件不会被当成就绪。
+  已经在本地的文件只要能自校验就认，不比对清单里的字节数（同一权重的不同 repack
+  会差几十字节，按大小判会让人白下 19.5GB）。
+
+---
+
+## 示例工作流
+
+`example_workflows/` 里两张图，**只用 ComfyUI 核心节点 + 本包的三个节点**——
+不需要 KJNodes、不需要 wavespeed、不需要任何改过的采样器。
+
+| 文件 | 模式 | 需要 |
+|---|---|---|
+| `MiniMax_H3_Studio_Reference.json` | 参考生视频 | `h3_ref2va` + 文本编码器 + VAE + Turbo LoRA |
+| `MiniMax_H3_Studio_TextToVideo.json` | 文生视频 | `h3_fl2va` + 文本编码器 + VAE + Turbo LoRA |
+
+两张都预置了一小段演示剧本，打开编辑器看到的是填好的结构而不是空表单。
+参考版指向 ComfyUI 自带的 `input/example.png`，换成你自己的设定稿即可。
+
+---
+
+## 一、实体模型
+
+**官方的 `<Subject N>` 不只是「角色」。** 它是任意可复用的声明实体，
+官方的 visible content type 全集是：
+
+| 类型 | 官方短语 | 默认保留等级 |
+|---|---|---|
+| 人物 | `identity and appearance` | fully_preserved |
+| 物件 / 服装 / 道具 | `visible object appearance` | fully_preserved |
+| 场景 / 环境 | `scene and environment` | fully_preserved |
+| 动作 / 姿态 | `pose and movement` | **attribute_transfer**（必须指定迁移目标）|
+| 画风 | `visual style` | weak_reference |
+| 画外音 | 无（不占 Subject 编号）| — |
+
+绑定句模板：`The {短语} of <Subject 1> {is|are} defined by <Picture 1>.`
+**一个实体可以绑多个素材**（正面图 + 侧面图 + 服装细节各一张）。
+
+### 两套编号互不相干
+
+- `<Subject N>` 按**实体表顺序**编号，只有「出现在画面里」的占号
+- `(S1)(S2)` 按**首次开口顺序**编号，**从不开口的实体不给编号**
+
+所以完全可能出现 `<Subject 2> (S1)`。卡片右上角实时显示实际会发出去的编号。
+
+### 常见场景怎么表达
+
+| 想做的事 | 怎么做 |
+|---|---|
+| 多角色对话 | 建多个「人物」实体，台词卡上选说话人 |
+| 每个角色不同音色 | 每个实体各绑各的音色素材 |
+| 中途换衣服 | 建两个「物件」实体，在分镜的**变更**里写「A 脱下 校服」「A 穿上 红外套」 |
+| A 把东西交给 B | 变更选「交给」，三个槽：谁 / 什么 / 给谁 |
+| 千奇百怪的变化 | 变更选「自定义」，自己写一句，里面照样能 `@` 引用实体 |
+| 没有人物，只有物件/景色 | 只建物件和场景实体，一句台词不写。校验不会报错 |
+| 角色说日语、另一个说中文 | 每个实体单独设语言，`<d>[Lang]` 逐句按实体发送 |
+
+### `@` 引用
+
+画面描述、变更、概述、环境音里都能写 `@实体名`，保存时替换成 `<Subject N>`。
+按 `@` 直接弹出补全列表，↑ ↓ 选、回车插入。
+引用不到的实体标红并进校验。
+
+<p align="center">
+  <img src="images/mention-popup-zh.png" alt="按 @ 弹出素材/实体列表" width="330">
+</p>
+
+---
+
+## 二、图生文反推（🔍 反推描述）
+
+准备好参考图后不用再手写外观特征。实体卡上每条素材绑定旁边点一下。
+
+两个模型协作，**不是二选一**：
+
+| 模型 | 体积 | 职责 |
+|---|---|---|
+| `SmilingWolf/wd-eva02-large-tagger-v3` | 1.2 GB ONNX | 二次元离散属性抽取（v3 系列 F1 最高 0.4772）|
+| `Qwen/Qwen3-VL-4B-Instruct` | 8.3 GB bf16 | 成句描述，写实与二次元通用 |
+
+二次元图先用 WD14 抽标签当**事实依据**喂给 VLM，并明确告诉它标签在发色瞳色
+服饰上比自己看的准。写实照片关掉标签直接走 VLM。
+
+第三个后端是 **OpenAI 兼容接口**（Ollama / LM Studio / 云 API），零下载，
+想换更强的模型直接在弹窗里填 URL。
+
+### 设定稿版式会被自动挑出来
+
+WD14 会同时抓到 `multiple views / turnaround / white background / spread arms`
+这类**版式标签**。它们描述的是「这是一张设定稿」而不是角色长什么样，混进
+描述会被 H3 当画面内容照搬（三视图白底和张臂站姿被搬进成片是真实发生过的）。
+
+这些会被分离出来转成中文的**「不保留」候选**，反推完直接勾选加进剧本。
+视角类标签只在**确认是设定稿时**才建议丢弃——单张侧脸特写里的 `profile`
+是真实构图，不该误删。
+
+---
+
+## 三、音色生成（🎙 做音色）
+
+**「大妈声」的根因是没得挑，不是模型烂。** VoiceDesign 是随机采样，
+同一段描述换个 seed 音色差很远（实测组内相似度 0.989，确实在飘）。
+所以核心是**一次出多条候选并排试听**。
+
+| 来源 | 需要模型 | 说明 |
+|---|---|---|
+| 描述生成 | `Qwen3-TTS-12Hz-1.7B-VoiceDesign` 4.2 GB | 自由描述嗓音，随机采样，所以要多出几条挑 |
+| 克隆参考音频 | `Qwen3-TTS-12Hz-1.7B-Base` 4.2 GB | `x_vector_only` 从参考音频提音色向量复刻，不靠抽卡 |
+
+**不用 CustomVoice**（Vivian 那套固定预设），实测就是「大妈声」的来源。
+
+实测音色一致性（MFCC 余弦）：描述生成组内 0.989，克隆组内 0.997，
+克隆跨参考 0.980 —— 克隆更稳，且参考确实决定音色。
+（该指标在短片段上往 1.0 饱和，动态范围窄，以听感为准。）
+
+- **试听文本默认取该实体在剧本里的第一句真实台词**，听到的就是成片会说的那句
+- 选中的音色落盘到 `input/h3voice_*.wav`，跨剧本复用、跨进程持久化
+- 选中后**自动在图里建 `LoadAudio`、填好文件名、登记成 media、绑给该实体**，
+  不用手工连线；同一文件重复选会复用已有节点
+
+> 音色文件必须放 `input/` **根目录**：`LoadAudio` 用 `os.listdir(input_dir)`
+> 列文件，不递归，放子目录下拉框根本选不到。
+
+---
+
+## 四、中文编辑，英文输出
+
+编辑中文效率最高，但 H3 要英文。保存时所有散文字段走一趟 **Qwen3-VL 翻译**——
+不是查表——同时：
+
+- **台词正文一个字不动**（那是角色真要说出口的话）
+- `<Subject 1>`、`(S1)`、`@引用`、`<d>` 标签在翻译前被占位符换掉，译完再还原，
+  模型碰不到它们
+- 颜色排除项（`dark brown, NOT black, NOT auburn`）在翻译之后用英文确定性补齐——
+  H3 要求每个颜色都写明不许漂向哪个邻近色，否则深发会飘成橙发；而实测同一版指令下
+  VLM 自己补的覆盖率在 **0% / 25% / 62%** 之间乱跳，靠不住
+
+中文原文留在节点里，随时可以继续改。
+
+---
+
+## 五、显存与内存
+
+反推的 VLM 8 GB、音色模型 4 GB，跟 H3 抢显存必爆。所以：
+
+- `MiniMaxH3Easy.generate()` 开头先把两个都卸掉
+- 各有一个空闲 10 分钟自动卸载的守护线程
+- 关掉反推/音色弹窗、保存完成、生成完成，各触发一次显式释放：接进 ComfyUI 的
+  `free_memory`、`gc` ×3、`empty_cache`、`ipc_collect`，Windows 上还调
+  `EmptyWorkingSet` 把内存页还给系统
+
+16 GB 卡实测峰值：反推 8.78 GB，音色 4.09 GB。
+
+> 卸载时**绝不** `.to("cpu")`。那会把 8GB 权重从显存搬进内存然后留在那里
+> （实测 RSS 0.83 → 7.63 GB），反过来把 ComfyUI 自己饿死。
+
+---
+
+## 六、非官方项
+
+面板上标「非官方」的字段，官方**没有**对应受控词表，只作为普通英文写进描述：
+
+- **景别**（特写 / 中景 / 远景…）
+- **机位角度**（平视 / 仰拍 / 荷兰角…）
+
+官方也**没有**「广角」「微距」这类镜头焦段词。
+运镜 / 幅度 / 速度是官方词表，且**幅度与速度官方只有两档**（small/large、slow/fast）。
+
+---
+
+## 七、文件
+
+| 文件 | 作用 |
+|---|---|
+| `nodes.py` | 三个节点：Loader / Easy / Output |
+| `download_models.py` | 模型清单、断点续传下载器、HTTP 路由、命令行 |
+| `caption.py` | 图生文反推与保存时翻译的 HTTP 端点 |
+| `voice.py` | 音色生成的 HTTP 端点 |
+| `vram.py` | 显存/内存释放，接进 ComfyUI 的 `free_memory` |
+| `web/h3_grammar.js` | **语法 schema，唯一事实来源**。扩展语法只改这里 |
+| `web/h3_script_editor.js` | 数据模型 + 提示词拼装 + 校验 + 版本迁移 |
+| `web/h3_script_modal.js` | 编辑器弹窗 |
+| `web/h3_caption.js` | 反推弹窗 |
+| `web/h3_voice.js` | 音色工作台弹窗 |
+| `web/h3_models.js` | 模型下载面板 |
+
+### 设计原则
+
+**结构只用在 H3 语法要求机器精确的地方**——Subject/Speaker 编号、时间码、
+`<d>` 标签、保留声明、官方绑定句。其余一律是散文 + `@` 实体引用。
+
+v2 恰好搞反了：把景别语气这些散文结构化成下拉框，却把真正要算的编号写死，
+于是衣服、道具、纯景色片全都表达不了。
+
+### 剧本版本迁移
+
+`v1（单角色 speaker）→ v2（角色表）→ v3（实体模型）` 全通。
+`assemble()` 内部兜底迁移，没打开过编辑器直接点生成也不会出错。
+
+---
+
+## 许可证
+
+MIT，见 [LICENSE](LICENSE)。

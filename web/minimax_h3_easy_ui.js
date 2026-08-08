@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { openScriptModal } from "./h3_script_modal.js";
 import { translateLines, releaseAuxModels } from "./h3_caption.js";
+import { openModelManager, modelStatus } from "./h3_models.js";
 import { assemble, blankScript, SCRIPT_PROP,
          needsTranslation, applyTranslations } from "./h3_script_editor.js";
 
@@ -3866,6 +3867,32 @@ function installNode(nodeType, nodeData) {
     };
 }
 
+/**
+ * 加载器上的「下载模型」按钮。
+ *
+ * 放这里是因为：模型没下的时候，这个节点的几个下拉框全是空的——用户第一次
+ * 卡住就是卡在这。按钮就在空下拉框旁边，不用回头翻 README 找链接。
+ */
+function installModelButton(node) {
+    if (node.__h3ModelBtn) return;
+    node.__h3ModelBtn = true;
+    const w = node.addWidget("button", "⬇ 下载模型", null, () => {
+        openModelManager({ onClose: () => refreshModelBadge(node) });
+    });
+    w.serialize = false;
+    refreshModelBadge(node);
+}
+
+async function refreshModelBadge(node) {
+    let st;
+    try { st = await modelStatus(); } catch { return; }
+    const w = (node.widgets || []).find((x) => x?.name?.includes("下载模型"));
+    if (!w) return;
+    const missing = st.items.filter((i) => i.required && !i.ready).length;
+    w.name = missing ? `⬇ 下载模型（还缺 ${missing} 个必需）` : "⬇ 下载模型";
+    node.setDirtyCanvas?.(true, true);
+}
+
 function installLoaderNode(nodeType, nodeData) {
     if (nodeData?.name !== LOADER_CLASS) return;
     if (nodeType.prototype.__h3EasyLoaderInstalled) return;
@@ -3874,12 +3901,14 @@ function installLoaderNode(nodeType, nodeData) {
     nodeType.prototype.onNodeCreated = function onNodeCreatedH3Loader() {
         const result = originalCreated?.apply(this, arguments);
         localizeNodeInstance(this);
+        installModelButton(this);
         return result;
     };
     const originalConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function onConfigureH3Loader(info) {
         const result = originalConfigure?.apply(this, arguments);
         localizeNodeInstance(this);
+        installModelButton(this);
         return result;
     };
 }

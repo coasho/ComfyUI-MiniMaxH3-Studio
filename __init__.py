@@ -27,11 +27,13 @@ except Exception:  # pragma: no cover
     traceback.print_exc()
 
 for _name, _label, _fn in (("caption", "图生文反推模型", "unload_caption_models"),
-                           ("voice", "音色模型", "unload_voice_models")):
+                           ("voice", "音色模型", "unload_voice_models"),
+                           ("download_models", None, None)):
     try:
         _mod = __import__(f"{__name__}.{_name}", fromlist=[_name])
         _mod.register_routes()
-        vram.register(_label, getattr(_mod, _fn))
+        if _label:
+            vram.register(_label, getattr(_mod, _fn))
     except Exception:  # pragma: no cover
         import traceback
         print(f"[MiniMaxH3-Studio] {_name} 初始化失败，节点本身不受影响：")

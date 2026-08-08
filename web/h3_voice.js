@@ -251,9 +251,15 @@ export function openVoiceStudio(opt) {
     const gen = E("button", "h3v-btn pri", "生成候选");
     const use = E("button", "h3v-btn", "用作该角色音色");
     use.disabled = true;
+    const getModels = E("button", "h3v-btn", "下载模型");
+    getModels.style.display = "none";
+    getModels.onclick = async () => {
+        const { openModelManager } = await import("./h3_models.js");
+        openModelManager({ preselect: ["tts_voicedesign", "tts_base"], onClose: () => probe() });
+    };
     const cancel = E("button", "h3v-btn gh", "关闭");
     cancel.onclick = () => close();
-    ft.append(status, gen, use, cancel);
+    ft.append(status, getModels, gen, use, cancel);
 
     box.append(hd, bd, ft);
     mask.append(box);
@@ -290,32 +296,36 @@ export function openVoiceStudio(opt) {
     tabBank.onclick = () => setMode("bank");
 
     /* --- 探测后端 + 载入音色库 --- */
-    (async () => {
+    async function probe() {
         msg("正在检查音色后端…");
         try {
             const s = await voiceStatus();
             const design = s.backends.find((b) => b.id === "design");
             const clone = s.backends.find((b) => b.id === "clone");
+            tabClone.classList.toggle("off", !clone?.ready);
             if (!clone?.ready) {
-                tabClone.classList.add("off");
                 tabClone.title = "Base 模型还没下载完，暂不能克隆";
                 tabClone.textContent = "克隆参考音频（模型未就绪）";
+            } else {
+                tabClone.title = "";
+                tabClone.textContent = "克隆参考音频";
             }
-            if (!design?.ready) {
-                tabDesign.classList.add("off");
-                gen.disabled = true;
-                noteBox.style.display = "";
-                noteBox.textContent = "VoiceDesign 模型没找到，描述生成不可用。";
-            }
+            tabDesign.classList.toggle("off", !design?.ready);
+            gen.disabled = !design?.ready;
+            noteBox.style.display = design?.ready ? "none" : "";
+            if (!design?.ready) noteBox.textContent = "VoiceDesign 模型没找到，描述生成不可用。";
+            // 缺模型时给一条明路，不然只能自己去 README 里翻仓库名
+            getModels.style.display = (design?.ready && clone?.ready) ? "none" : "";
             renderBank(s.bank || []);
             const ready = s.backends.filter((b) => b.ready).map((b) => b.label.split("（")[0]);
             msg(ready.length ? `可用：${ready.join("、")}　音色库 ${s.bank?.length || 0} 条`
-                             : "没有可用的音色后端", ready.length ? "" : "bad");
+                             : "没有可用的音色后端，点「下载模型」", ready.length ? "" : "bad");
         } catch (e) {
             msg(`音色服务没起来：${e.message}。重启一次 ComfyUI 再试。`, "bad");
             gen.disabled = true;
         }
-    })();
+    }
+    probe();
 
     function renderBank(bank) {
         bankList.innerHTML = "";

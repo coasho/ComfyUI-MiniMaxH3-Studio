@@ -259,9 +259,17 @@ export function openCaptionDialog(opt) {
     const applyR = E("button", "h3c-btn", "替换描述");
     const applyA = E("button", "h3c-btn", "追加到描述");
     applyR.disabled = applyA.disabled = true;
+    // 模型没下时这里是唯一的出路，不该让用户自己去找加载器节点上那个按钮
+    const getModels = E("button", "h3c-btn", "下载模型");
+    getModels.style.display = "none";
+    getModels.onclick = async () => {
+        const { openModelManager } = await import("./h3_models.js");
+        openModelManager({ preselect: ["qwen3vl_caption", "wd14_tagger"],
+                           onClose: () => probe() });
+    };
     const cancel = E("button", "h3c-btn gh", "关闭");
     cancel.onclick = () => close();
-    ft.append(status, run, applyR, applyA, cancel);
+    ft.append(status, getModels, run, applyR, applyA, cancel);
 
     box.append(hd, bd, ft);
     mask.append(box);
@@ -279,7 +287,7 @@ export function openCaptionDialog(opt) {
     const msg = (t, cls) => { status.textContent = t; status.className = "h3c-msg" + (cls ? " " + cls : ""); };
 
     /* --- 探测后端可用性 --- */
-    (async () => {
+    async function probe() {
         msg("正在检查可用后端…");
         try {
             const st = await captionStatus();
@@ -305,10 +313,13 @@ export function openCaptionDialog(opt) {
             cfg.style.display = "";
 
             dot.style.background = ready.length ? "var(--ok)" : "var(--warn)";
+            const localMissing = st.backends.some((b) => !b.ready && b.id !== "openai");
+            getModels.style.display = localMissing ? "" : "none";
             if (!ready.length) {
-                msg("还没有可用后端。要么等本地模型下载完，要么在下面填一个 OpenAI 兼容接口。", "bad");
+                msg("还没有可用后端。点「下载模型」把本地模型下下来，或者在下面填一个 OpenAI 兼容接口。", "bad");
                 run.disabled = true;
             } else {
+                run.disabled = false;
                 const notReady = st.backends.filter((b) => !b.ready).map((b) => b.label.split("（")[0]);
                 msg(`可用：${ready.map((b) => b.label.split("（")[0]).join("、")}` +
                     (notReady.length ? `　未就绪：${notReady.join("、")}` : ""));
@@ -318,7 +329,8 @@ export function openCaptionDialog(opt) {
             msg(`反推服务没起来：${e.message}。重启一次 ComfyUI 再试。`, "bad");
             run.disabled = true;
         }
-    })();
+    }
+    probe();
 
     run.onclick = async () => {
         if (state.busy) return;

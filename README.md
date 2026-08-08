@@ -1,166 +1,307 @@
 # ComfyUI-MiniMaxH3-Studio
 
-给 MiniMax H3 用的剧本编辑器：把官方那套六段式语法藏起来，只让人填内容。
-在 `MiniMax H3 Easy` 节点上多一个 **📝 编辑剧本** 按钮，点开就是全部功能。
+[中文说明](README_CN.md)
 
-编号、时间码、`<d>` 标签、保留声明、官方绑定句，全部在生成时自动拼出来。
+A script editor for MiniMax H3. It hides the official six-section reference grammar
+and lets you write content instead — the `MiniMax H3 Easy` node grows a
+**📝 Edit script** button, and everything happens in there.
+
+Subject/Speaker numbering, timecodes, `<d>` dialogue tags, retention declarations and
+the official binding sentences are all assembled for you at save time.
+
+It also ships the two things that otherwise stall a first install: a **one-click model
+downloader** and **example workflows that use nothing but core ComfyUI nodes**.
+
+<p align="center">
+  <img src="images/reference-editor-en.png" alt="The node with images, video and audio on one Media input" width="720">
+</p>
+
+<sup>Images, video and audio all share one sortable `Media` input, and the prompt box
+references them inline as `@name`. The script editor sits on top of this.</sup>
 
 ---
 
-## 一、实体模型
+## Install
 
-**官方的 `<Subject N>` 不只是「角色」。** 它是任意可复用的声明实体，
-官方的 visible content type 全集是：
+```bash
+git clone https://github.com/nkxx188/ComfyUI-MiniMaxH3-Studio.git
+```
 
-| 类型 | 官方短语 | 默认保留等级 |
+Clone it into `ComfyUI/custom_nodes/`, then install the optional extras and restart:
+
+```bash
+pip install -r ComfyUI-MiniMaxH3-Studio/requirements.txt
+```
+
+The three nodes themselves need nothing beyond what ComfyUI already has.
+`requirements.txt` only covers the editor's optional features (captioning, voice) — if
+a package is missing, that feature reports it and the nodes keep working.
+
+**ComfyUI ≥ `bdcb886` (2026-08-06 nightly) is strongly recommended.** That commit adds
+native MiniMax-H3 AV flow sampling (`ModelSamplingAV`); before it, the 4-step Turbo LoRA
+produced badly clipped audio. The example workflows are built around the Turbo LoRA.
+
+Voice generation additionally needs [ComfyUI-Qwen3-TTS](https://github.com/lrzjason/ComfyUI-Qwen3-TTS)
+installed alongside this package — it owns the TTS node classes this editor drives.
+
+---
+
+## One-click model download
+
+The H3 checkpoints live across three HuggingFace repos under near-identical names, and
+you need six files before anything runs. Don't copy links by hand.
+
+Open the **MiniMax H3 Easy Loader** node and press **⬇ 下载模型 / Download models**.
+It shows what is present, what is missing, and how many bytes each one still needs.
+The same button appears inside the captioning and voice dialogs when their model is absent.
+
+Or from a terminal, without starting ComfyUI:
+
+```bash
+python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --list
+```
+
+```bash
+python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --required
+```
+
+| id | required | size | goes to |
+|---|---|---|---|
+| `h3_ref2va` | ✔ | 19.5 GB | `models/diffusion_models/` |
+| `h3_fl2va` | ✔ | 19.5 GB | `models/diffusion_models/` |
+| `h3_text_encoder` | ✔ | 14.6 GB | `models/text_encoders/` |
+| `h3_text_encoder_int8` | — | 25.3 GB | alternative for pre-Blackwell GPUs |
+| `h3_vae` | ✔ | 5.4 GB | `models/vae/` (video + audio VAE) |
+| `h3_turbo_lora` | ✔ | 592 MB | `models/loras/` |
+| `qwen3vl_caption` | — | 8.3 GB | `models/LLM/Qwen3-VL-4B-Instruct/` |
+| `wd14_tagger` | — | 1.2 GB | reuses `comfyui-wd14-tagger/models/` if installed |
+| `tts_voicedesign` | — | 4.2 GB | `models/TTS/Qwen/…-VoiceDesign/` |
+| `tts_base` | — | 4.2 GB | `models/TTS/Qwen/…-Base/` |
+
+Details that matter in practice:
+
+- **Resumable.** Downloads land as `.part` next to the target and continue from wherever
+  they stopped — cancel, close ComfyUI, lose the connection, it picks up. `huggingface_hub`'s
+  `snapshot_download(local_dir=…)` has no resume on Xet storage, so this uses plain
+  `Range` requests with its own read timeout instead.
+- **No second copy.** Files go straight to the ComfyUI models directory, not through
+  `~/.cache/huggingface`.
+- **Mirrors.** Set `HF_ENDPOINT=https://hf-mirror.com` and it goes there.
+- **Verified.** `.safetensors` are checked against their own header before being renamed
+  into place, so a half-downloaded file never reports itself ready. Files already on disk
+  are trusted if they self-verify, even if their byte count differs from the manifest
+  (repacks of the same weights differ by a few dozen bytes).
+
+---
+
+## Example workflows
+
+`example_workflows/` contains two graphs that use **only core ComfyUI nodes plus this
+package's three nodes** — no KJNodes, no wavespeed, no patched samplers.
+
+| File | Mode | Needs |
 |---|---|---|
-| 人物 | `identity and appearance` | fully_preserved |
-| 物件 / 服装 / 道具 | `visible object appearance` | fully_preserved |
-| 场景 / 环境 | `scene and environment` | fully_preserved |
-| 动作 / 姿态 | `pose and movement` | **attribute_transfer**（必须指定迁移目标）|
-| 画风 | `visual style` | weak_reference |
-| 画外音 | 无（不占 Subject 编号）| — |
+| `MiniMax_H3_Studio_Reference.json` | reference-to-video | `h3_ref2va` + text encoder + VAEs + Turbo LoRA |
+| `MiniMax_H3_Studio_TextToVideo.json` | text-to-video | `h3_fl2va` + text encoder + VAEs + Turbo LoRA |
 
-绑定句模板：`The {短语} of <Subject 1> {is|are} defined by <Picture 1>.`
-**一个实体可以绑多个素材**（正面图 + 侧面图 + 服装细节各一张）。
+Both come with a short demo script already loaded, so opening the editor shows a filled-in
+structure rather than a blank form. The reference one points at `input/example.png`, which
+ships with ComfyUI; swap in your own reference sheet.
 
-### 两套编号互不相干
+---
 
-- `<Subject N>` 按**实体表顺序**编号，只有「出现在画面里」的占号
-- `(S1)(S2)` 按**首次开口顺序**编号，**从不开口的实体不给编号**
+## The entity model
 
-所以完全可能出现 `<Subject 2> (S1)`。卡片右上角实时显示实际会发出去的编号。
+**The official `<Subject N>` is not just "a character."** It is any reusable declared
+entity. The full set of official visible content types:
 
-### 常见场景怎么表达
+| Kind | Official phrase | Default retention |
+|---|---|---|
+| Person | `identity and appearance` | fully_preserved |
+| Object / clothing / prop | `visible object appearance` | fully_preserved |
+| Scene / environment | `scene and environment` | fully_preserved |
+| Action / pose | `pose and movement` | **attribute_transfer** (needs a transfer target) |
+| Art style | `visual style` | weak_reference |
+| Off-screen voice | none (takes no Subject number) | — |
 
-| 想做的事 | 怎么做 |
+Binding sentence: `The {phrase} of <Subject 1> {is|are} defined by <Picture 1>.`
+**One entity can bind several references** (front view + side view + a costume detail).
+
+### The two numbering schemes are independent
+
+- `<Subject N>` follows **declaration order**, and only on-screen entities take a number
+- `(S1)(S2)` follows **first-speaking order**, and entities that never speak get none
+
+So `<Subject 2> (S1)` is perfectly valid. Each card shows the numbers it will actually emit.
+
+### How to express the awkward cases
+
+| You want | Do this |
 |---|---|
-| 多角色对话 | 建多个「人物」实体，台词卡上选说话人 |
-| 每个角色不同音色 | 每个实体各绑各的音色素材 |
-| 中途换衣服 | 建两个「物件」实体，在分镜的**变更**里写「A 脱下 校服」「A 穿上 红外套」 |
-| A 把东西交给 B | 变更选「交给」，三个槽：谁 / 什么 / 给谁 |
-| 千奇百怪的变化 | 变更选「自定义」，自己写一句，里面照样能 `@` 引用实体 |
-| 没有人物，只有物件/景色 | 只建物件和场景实体，一句台词不写。校验不会报错 |
-| 角色说日语、另一个说中文 | 每个实体单独设语言，`<d>[Lang]` 逐句按实体发送 |
+| Several characters talking | One "person" entity each; pick the speaker on the line card |
+| A different voice per character | Bind a voice reference to each entity |
+| Changing clothes mid-shot | Two "object" entities, then shot **beats**: "A removes uniform", "A wears red coat" |
+| A hands something to B | Beat kind "give", with three slots: who / what / to whom |
+| Anything stranger than that | Beat kind "custom", write the sentence yourself — `@` references still work |
+| No characters at all, just objects and scenery | Only object and scene entities, zero dialogue. Validation stays quiet |
+| One speaks Japanese, another Chinese | Set the language per entity; `<d>[Lang]` is emitted per line |
 
-### `@` 引用
+### `@` references
 
-画面描述、变更、概述、环境音里都能写 `@实体名`，生成时替换成 `<Subject N>`。
-输入框下方**实时显示解析结果**，引用不到的实体标红并进校验。
-下面一排芯片可以点着在光标处插入。
+Shot descriptions, beats, the summary and the soundscape all accept `@entityName`, resolved
+to `<Subject N>` on save. Typing `@` opens a completion list you drive with ↑ ↓ and Enter.
+Unresolved references are flagged in red and reported by validation.
+
+<p align="center">
+  <img src="images/mention-popup-en.png" alt="Typing @ opens the media/entity picker" width="330">
+</p>
 
 ---
 
-## 二、图生文反推（🔍 反推描述）
+## Image-to-text captioning (🔍)
 
-准备好参考图后不用再手写外观特征。实体卡上每条素材绑定旁边点一下。
+Stop rewriting the appearance you already have in a reference sheet. Every reference binding
+on an entity card has a caption button.
 
-两个模型协作，**不是二选一**：
+Two models cooperate — this is not an either/or:
 
-| 模型 | 体积 | 职责 |
+| Model | Size | Job |
 |---|---|---|
-| `SmilingWolf/wd-eva02-large-tagger-v3` | 1.2 GB ONNX | 二次元离散属性抽取（v3 系列 F1 最高 0.4772）|
-| `Qwen/Qwen3-VL-4B-Instruct` | 8.3 GB bf16 | 成句描述，写实与二次元通用 |
+| `SmilingWolf/wd-eva02-large-tagger-v3` | 1.2 GB ONNX | Anime attribute extraction (best F1 in the v3 line, 0.4772) |
+| `Qwen/Qwen3-VL-4B-Instruct` | 8.3 GB bf16 | Writes sentences; good on both photoreal and anime |
 
-二次元图先用 WD14 抽标签当**事实依据**喂给 VLM，并明确告诉它标签在发色瞳色
-服饰上比自己看的准。写实照片关掉标签直接走 VLM。
+For anime images WD14 tags are extracted first and handed to the VLM **as ground truth**,
+with an explicit instruction that the tags beat its own reading on hair/eye/clothing colour.
+For photographs the tags are skipped.
 
-第三个后端是 **OpenAI 兼容接口**（Ollama / LM Studio / 云 API），零下载，
-想换更强的模型直接在弹窗里填 URL。
+A third backend is any **OpenAI-compatible endpoint** (Ollama, LM Studio, a cloud API) —
+zero download, fill in the URL in the dialog.
 
-### 设定稿版式会被自动挑出来
+### Character-sheet layout artifacts are separated out
 
-WD14 会同时抓到 `multiple views / turnaround / white background / spread arms`
-这类**版式标签**。它们描述的是「这是一张设定稿」而不是角色长什么样，混进
-描述会被 H3 当画面内容照搬（三视图白底和张臂站姿被搬进成片是真实发生过的）。
+WD14 also picks up `multiple views / turnaround / white background / spread arms` — these
+describe *that it is a character sheet*, not what the character looks like. Left in the
+description, H3 copies them into the frame (a T-pose on white *has* shown up in output).
 
-这些会被分离出来转成中文的**「不保留」候选**，反推完直接勾选加进剧本。
-视角类标签只在**确认是设定稿时**才建议丢弃——单张侧脸特写里的 `profile`
-是真实构图，不该误删。
-
-### 颜色排除项是本地补全的
-
-H3 要求每个颜色都写明不许漂向哪个邻近色，否则黑发会飘成橙发。
-实测 Qwen3-VL-4B 做不到：同一版指令下覆盖率在 **0% / 25% / 62%** 之间乱跳。
-所以让 VLM 只负责看，排除项由本地按固定对照表确定性补齐（可在弹窗里关掉）。
-
-中文用括号形式：`浅棕色（不是红棕）长发`——逗号形式的
-「浅棕色，不是红棕长发」会被读成「不是红棕长发」，意思正好反了。
+They are pulled out into **"not retained"** candidates you can tick straight into the script.
+Viewpoint tags are only proposed for removal when the image is actually a sheet — `profile`
+in a single side-view close-up is real composition, not an artifact.
 
 ---
 
-## 三、音色生成（🎙 做音色）
+## Voice generation (🎙)
 
-**「大妈声」的根因是没得挑，不是模型烂。** VoiceDesign 是随机采样，
-同一段描述换个 seed 音色差很远（实测组内相似度 0.989，确实在飘）。
-所以核心是**一次出多条候选并排试听**。
+**The "middle-aged auntie voice" problem is a selection problem, not a model problem.**
+VoiceDesign samples randomly; the same description with a different seed sounds quite
+different (measured intra-group similarity 0.989 — it really does drift). So the point of
+this panel is **several candidates side by side, auditioned before you commit**.
 
-| 来源 | 需要模型 | 说明 |
+| Source | Model | Notes |
 |---|---|---|
-| 描述生成 | `Qwen3-TTS-12Hz-1.7B-VoiceDesign` 4.3 GB | 自由描述嗓音，随机采样，所以要多出几条挑 |
-| 克隆参考音频 | `Qwen3-TTS-12Hz-1.7B-Base` 4.2 GB | `x_vector_only` 从参考音频提音色向量复刻，不靠抽卡 |
+| Describe it | `Qwen3-TTS-12Hz-1.7B-VoiceDesign` 4.2 GB | Free-text description, random sampling — generate a few and pick |
+| Clone a reference | `Qwen3-TTS-12Hz-1.7B-Base` 4.2 GB | `x_vector_only` timbre vector from reference audio. No dice-rolling |
 
-**不用 CustomVoice**（Vivian 那套固定预设），实测就是「大妈声」的来源。
+**CustomVoice is deliberately not used** — that fixed Vivian preset is where the auntie
+voice actually comes from.
 
-实测音色一致性（MFCC 余弦）：描述生成组内 0.989，克隆组内 0.997，
-克隆跨参考 0.980 —— 克隆更稳，且参考确实决定音色。
-（该指标在短片段上往 1.0 饱和，动态范围窄，以听感为准。）
+Measured timbre consistency (MFCC cosine): design intra-group 0.989, clone intra-group 0.997,
+clone across references 0.980 — cloning is tighter, and the reference genuinely decides the
+timbre. (The metric saturates towards 1.0 on short clips; trust your ears.)
 
-- **试听文本默认取该实体在剧本里的第一句真实台词**，听到的就是成片会说的那句
-- 选中的音色落盘到 `input/h3voice_*.wav`，跨剧本复用、跨进程持久化
-- 选中后**自动在图里建 `LoadAudio`、填好文件名、登记成 media、绑给该实体**，
-  不用手工连线；同一文件重复选会复用已有节点
+- **The audition text defaults to that entity's first real line from the script**, so you
+  hear the sentence that will be in the film
+- The chosen voice is written to `input/h3voice_*.wav` — reusable across scripts and restarts
+- Picking it **creates a `LoadAudio` node, fills in the filename, registers it as media and
+  binds it to the entity** automatically; re-picking the same file reuses the existing node
 
-> 音色文件必须放 `input/` **根目录**：`LoadAudio` 用 `os.listdir(input_dir)`
-> 列文件，不递归，放子目录下拉框根本选不到。
-
----
-
-## 四、显存
-
-反推的 VLM 8 GB、音色模型 4 GB，跟 H3 抢显存必爆。所以：
-
-- `MiniMaxH3Easy.generate()` 开头先把两个都卸掉
-- 各有一个空闲 10 分钟自动卸载的守护线程
-
-16 GB 卡实测峰值：反推 8.78 GB，音色 4.09 GB。
+> Voice files must sit in the **root** of `input/`: `LoadAudio` lists files with
+> `os.listdir(input_dir)` and does not recurse, so anything in a subdirectory is invisible
+> in its dropdown.
 
 ---
 
-## 五、非官方项
+## Chinese in, English out
 
-面板上标「非官方」的字段，官方**没有**对应受控词表，只作为普通英文写进描述：
+Editing in Chinese is far faster, but H3 wants English. On save, every prose field is sent
+through **Qwen3-VL as a translator** — not a lookup table — while:
 
-- **景别**（特写 / 中景 / 远景…）
-- **机位角度**（平视 / 仰拍 / 荷兰角…）
+- **dialogue text is never touched** (it is what the character actually says)
+- `<Subject 1>`, `(S1)`, `@refs` and `<d>` tags are masked out before translation and
+  restored after, so the model cannot mangle them
+- colour exclusions (`dark brown, NOT black, NOT auburn`) are appended deterministically
+  afterwards in English — H3 needs every colour fenced against its neighbours or dark hair
+  drifts orange, and the VLM's own coverage of this was measured at 0% / 25% / 62% across
+  identical prompts
 
-官方也**没有**「广角」「微距」这类镜头焦段词。
-运镜 / 幅度 / 速度是官方词表，且**幅度与速度官方只有两档**（small/large、slow/fast）。
+The Chinese original stays in the node so you can keep editing it.
 
 ---
 
-## 六、文件
+## VRAM and RAM
 
-| 文件 | 作用 |
+The captioning VLM is 8 GB and the voice model 4 GB — either one competing with H3 is an OOM.
+
+- `MiniMaxH3Easy.generate()` unloads both before it starts
+- Both have an idle reaper that unloads after 10 minutes
+- Closing the caption/voice dialogs, finishing a save, and finishing a generation each
+  trigger an explicit release: ComfyUI's `free_memory` hook, `gc` ×3, `empty_cache`,
+  `ipc_collect`, and `EmptyWorkingSet` on Windows to hand pages back to the OS
+
+Measured peaks on a 16 GB card: captioning 8.78 GB, voice 4.09 GB.
+
+> Models are never moved to CPU on unload. `model.to("cpu")` moves 8 GB of weights from
+> VRAM into RAM and leaves them there (resident set went 0.83 → 7.63 GB), which then
+> starved the ComfyUI process itself.
+
+---
+
+## What is not official
+
+Fields marked "非官方 / unofficial" in the panel have **no** official controlled vocabulary
+and are written into the description as ordinary English:
+
+- **Shot size** (close-up / medium / wide …)
+- **Camera angle** (eye level / low / dutch …)
+
+There is also **no** official vocabulary for focal-length words like "wide-angle" or "macro".
+Camera motion / amplitude / speed *are* official, and **amplitude and speed only have two
+levels each** (small/large, slow/fast).
+
+---
+
+## Files
+
+| File | Role |
 |---|---|
-| `nodes.py` | 三个节点：Loader / Easy / Output |
-| `caption.py` | 图生文反推的 HTTP 端点与后端 |
-| `voice.py` | 音色生成的 HTTP 端点与后端 |
-| `web/h3_grammar.js` | **语法 schema，唯一事实来源**。扩展语法只改这里 |
-| `web/h3_script_editor.js` | 数据模型 + 提示词拼装 + 校验 + 版本迁移 |
-| `web/h3_script_modal.js` | 编辑器弹窗 |
-| `web/h3_caption.js` | 反推弹窗 |
-| `web/h3_voice.js` | 音色工作台弹窗 |
+| `nodes.py` | The three nodes: Loader / Easy / Output |
+| `download_models.py` | Model manifest, resumable downloader, HTTP routes, CLI |
+| `caption.py` | Captioning and save-time translation endpoints |
+| `voice.py` | Voice generation endpoints |
+| `vram.py` | VRAM/RAM release, wired into ComfyUI's `free_memory` |
+| `web/h3_grammar.js` | **The grammar schema — single source of truth.** Extend the grammar here |
+| `web/h3_script_editor.js` | Data model, prompt assembly, validation, version migration |
+| `web/h3_script_modal.js` | The editor dialog |
+| `web/h3_caption.js` | Captioning dialog |
+| `web/h3_voice.js` | Voice studio dialog |
+| `web/h3_models.js` | Model download panel |
 
-### 设计原则
+### Design principle
 
-**结构只用在 H3 语法要求机器精确的地方**——Subject/Speaker 编号、时间码、
-`<d>` 标签、保留声明、官方绑定句。其余一律是散文 + `@` 实体引用。
+**Structure only where H3's grammar demands machine-exact output** — Subject/Speaker
+numbering, timecodes, `<d>` tags, retention declarations, official binding sentences.
+Everything else is prose plus `@entity` references.
 
-v2 恰好搞反了：把景别语气这些散文结构化成下拉框，却把真正要算的编号写死，
-于是衣服、道具、纯景色片全都表达不了。
+v2 had this exactly backwards: it turned shot size and delivery into dropdowns while
+hard-coding the numbering that actually needs computing — which made clothing, props and
+character-free shots impossible to express.
 
-### 剧本版本迁移
+### Script version migration
 
-`v1（单角色 speaker）→ v2（角色表）→ v3（实体模型）` 全通。
-`assemble()` 内部兜底迁移，没打开过编辑器直接点生成也不会出错。
+`v1 (single speaker) → v2 (character table) → v3 (entity model)` all migrate.
+`assemble()` migrates defensively, so hitting generate without ever opening the editor works.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

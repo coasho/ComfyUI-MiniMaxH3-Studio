@@ -537,34 +537,6 @@ def build_instruction(kind: str, lang: str, hint: str, tags: dict | None) -> str
 # 4B 模型做不到「每个颜色都带排除项」——实测同一版指令下覆盖率在 0%/25%/62%
 # 之间乱跳，编号硬规则也救不回来。所以让 VLM 只负责看，排除项交给确定性补全。
 # 值都是该颜色最容易被扩散模型漂过去的邻近色。
-EN_CONFUSABLE = {
-    "black": "dark brown", "white": "cream", "cream": "pale yellow",
-    "red": "orange-red", "crimson": "rust", "scarlet": "orange",
-    "pink": "salmon", "rose": "coral", "magenta": "hot pink",
-    "orange": "amber", "amber": "orange", "yellow": "mustard",
-    "gold": "brass", "golden": "brass",
-    "green": "teal", "emerald": "jade", "teal": "sea green",
-    "cyan": "sky blue", "blue": "teal", "cerulean": "teal",
-    "azure": "cyan", "navy": "black", "indigo": "violet",
-    "purple": "magenta", "violet": "periwinkle", "lavender": "lilac",
-    "brown": "auburn", "auburn": "copper", "tan": "beige", "beige": "tan",
-    "grey": "silver", "gray": "silver", "silver": "pale grey",
-    "blonde": "light brown", "blond": "light brown", "ginger": "copper",
-}
-
-ZH_CONFUSABLE = {
-    "黑": "深棕", "白": "米白", "红": "砖红", "粉": "藕荷", "橙": "土黄",
-    "黄": "土黄", "金": "铜", "绿": "青", "青": "蓝绿", "蓝": "青",
-    "紫": "品红", "棕": "红棕", "褐": "棕", "灰": "银", "银": "浅灰",
-}
-
-_EN_COLOUR_RE = re.compile(
-    r"\b(" + "|".join(sorted(EN_CONFUSABLE, key=len, reverse=True)) + r")\b", re.I)
-_ZH_COLOUR_RE = re.compile("(" + "|".join(ZH_CONFUSABLE) + ")色")
-
-
-# 排除项到哪结束。中文用全角标点，拿 ASCII "," 去找会一路找不到、
-# 退化成固定窗口把后半句整个吞掉（实测漏补了后三处）。
 _STOPPERS = ",，;；。.)）\n"
 
 
@@ -581,86 +553,75 @@ def _excluded_spans(text: str, marker: str) -> list[tuple[int, int]]:
     return spans
 
 
-def strip_orphan_exclusions(text: str, lang: str) -> tuple[str, list[str]]:
-    """
-    删掉没挂在颜色词后面的孤立排除项。
+# ----------------------------------------------------- 颜色排除项（仅英文）
 
-    模型会把规则里的例句原样抄进输出（实测出现过孤零零的「不是青绿」）。
-    判据很简单：排除项前面必须紧跟一个已知颜色词，否则它就是抄来的垃圾。
-    """
-    if not text.strip():
-        return text, []
-    # 分隔符要连分号和句首一起认：抄来的例句常常自成一个从句
-    #（实测漏过「；不是青绿」——原来只匹配逗号前缀）
-    if lang == "zh":
-        rx = re.compile(r"[（(]\s*不是[^）)]{1,12}[）)]"
-                        r"|(?:^|[，,；;])\s*不是[^，,。；;]{1,12}")
-        table = ZH_CONFUSABLE
-        colour_at_end = lambda s: bool(re.search(
-            "(" + "|".join(table) + r")[色]?\s*$", s))
-    else:
-        rx = re.compile(r"\(\s*NOT\b[^)]{1,28}\)"
-                        r"|(?:^|[,，;；])\s*NOT\b[\w\s-]{1,28}", re.I)
-        table = EN_CONFUSABLE
-        colour_at_end = lambda s: bool(re.search(
-            r"\b(" + "|".join(table) + r")\b[\w\s-]{0,12}$", s, re.I))
+# H3 要求每个颜色写明不许漂向哪个邻近色，否则黑发会飘成橙发。
+#
+# 这件事分两半，各交给擅长的一方：
+#   选哪个邻近色 —— 封闭词表，用表。问模型没有意义。
+#   插在哪里     —— 英文有 \b 词边界，位置是确定的。
+#
+# 之前失败是因为在【中文】上做插入：中文没有词边界，
+# 「浅棕发色」会被切成「浅棕发（不是红棕）色」。现在描述统一先译成英文再处理，
+# 那个失败模式不复存在。让模型自己写排除项也试过：混在翻译里 0%，
+# 单独一趟 38%，它做几个就放弃——穷举式改写是 4B 模型的短板。
+CONFUSABLE = {
+    "jet black": "dark brown", "black": "dark brown",
+    "off-white": "cream", "white": "cream", "cream": "pale yellow",
+    "crimson": "rust", "scarlet": "orange", "red": "orange-red",
+    "hot pink": "magenta", "dusty pink": "salmon", "pale pink": "blush",
+    "pink": "salmon", "rose": "coral", "magenta": "hot pink",
+    "orange": "amber", "amber": "orange", "yellow": "mustard",
+    "golden": "brass", "gold": "brass",
+    "emerald": "jade", "olive": "khaki", "green": "teal",
+    "teal": "sea green", "cyan": "sky blue",
+    "cerulean": "teal", "azure": "cyan", "navy": "black", "blue": "teal",
+    "indigo": "violet", "lavender": "lilac", "violet": "periwinkle",
+    "purple": "magenta",
+    "auburn": "copper", "chestnut": "mahogany", "light brown": "tan",
+    "dark brown": "black", "brown": "auburn",
+    "tan": "beige", "beige": "tan", "khaki": "olive",
+    "silver": "pale grey", "grey": "silver", "gray": "silver",
+    "blonde": "light brown", "blond": "light brown",
+    "ash-blonde": "platinum", "platinum": "white",
+    "ginger": "copper", "copper": "bronze", "bronze": "copper",
+}
 
-    out, last, dropped = [], 0, []
-    for m in rx.finditer(text):
-        if colour_at_end(text[max(0, m.start() - 40):m.start()]):
-            continue                      # 正常挂在颜色后面，留着
-        dropped.append(m.group(0).strip())
-        out.append(text[last:m.start()])
-        last = m.end()
-    if not dropped:
-        return text, []
-    out.append(text[last:])
-    s = re.sub(r"\s{2,}", " ", "".join(out))
-    s = re.sub(r"\s+([,，。;；])", r"\1", s)
-    s = re.sub(r"([,，;；])\s*\1+", r"\1", s).strip()
-    return s, dropped
+# 长的先匹配，"light brown" 不能被 "brown" 抢走
+_COLOUR_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in
+                      sorted(CONFUSABLE, key=len, reverse=True)) + r")\b", re.I)
 
 
-def enforce_colour_exclusions(text: str, lang: str) -> tuple[str, int]:
-    """
-    给每个裸颜色补上排除项。返回 (新文本, 补了几个)。
+def add_colour_exclusions(text: str) -> tuple[str, int]:
+    """给英文描述里每个裸颜色补排除项。返回 (新文本, 补了几个)。"""
+    if not text.strip() or re.search(r"[一-鿿]", text):
+        return text, 0        # 中文不碰：没有词边界，插入不安全
 
-    用括号而不是逗号：中文里「浅棕色，不是红棕长发」会被读成
-    「不是红棕长发」，意思正好反了。括号形式没有这个歧义。
-    """
-    if not text.strip():
-        return text, 0
-    if lang == "zh":
-        rx, table, marker = _ZH_COLOUR_RE, ZH_CONFUSABLE, r"不是"
-        def already(tail):
-            t = tail.lstrip()
-            return t.startswith("（不是") or t.startswith("(不是") or t.startswith("，不是")
-        def clause(word): return f"（不是{table[word]}）"
-        def key(m): return m.group(1)
-    else:
-        rx, table, marker = _EN_COLOUR_RE, EN_CONFUSABLE, r"\bNOT\b"
-        def already(tail):
-            return (re.match(r"[\w\s-]{0,24},\s*NOT\b", tail, re.I) is not None
-                    or re.match(r"\s*\(\s*NOT\b", tail, re.I) is not None)
-        def clause(word): return f" (NOT {table[word.lower()]})"
-        def key(m): return m.group(1).lower()
-
-    skip = _excluded_spans(text, marker)
     out, last, added = [], 0, 0
-    for m in rx.finditer(text):
-        if any(a <= m.start() < b for a, b in skip):
+    for m in _COLOUR_RE.finditer(text):
+        # 它本身就是某条排除项里的颜色（", NOT dark brown"）—— 跳过
+        if re.search(r",\s*NOT\s+[\w\s-]{0,20}$", text[max(0, m.start() - 30):m.start()], re.I):
             continue
-        if already(text[m.end():m.end() + 40]):
+        # 已经带排除项了 —— 跳过。允许中间隔个名词（"red bow, NOT orange"）
+        if re.match(r"[\w\s-]{0,20},\s*NOT\b", text[m.end():m.end() + 40], re.I):
             continue
-        word = key(m)
-        if word not in table:
+        wrong = CONFUSABLE.get(m.group(1).lower())
+        if not wrong:
             continue
         out.append(text[last:m.end()])
-        out.append(clause(word))
+        out.append(f", NOT {wrong},")
         last = m.end()
         added += 1
+        # 紧跟的逗号会变成双逗号，吃掉它
+        if text[last:last + 1] == ",":
+            last += 1
+    if not added:
+        return text, 0
     out.append(text[last:])
-    return "".join(out), added
+    s = re.sub(r",\s*,", ",", "".join(out))
+    s = re.sub(r",\s*([.;])", r"\1", s)
+    return s, added
 
 
 # --------------------------------------------------------- 剥离「没有什么」
@@ -690,9 +651,6 @@ _ABSENCE_ZH = re.compile(
     r"|无装饰|素净|无多余|无额外|无露出|不露)")
 
 # 颜色排除项的确定形状，只有它才受保护
-_EXCLUSION_SHAPE = re.compile(r"[,，]\s*NOT\b|\(\s*NOT\b|（\s*不是|[,，]\s*不是", re.I)
-
-
 def strip_absence_claims(text: str, lang: str) -> tuple[str, list[str]]:
     """删掉断言「没有什么」的从句。返回 (新文本, 被删掉的原文列表)。"""
     if not text.strip():
@@ -712,10 +670,11 @@ def strip_absence_claims(text: str, lang: str) -> tuple[str, list[str]]:
     kept, dropped = [], []
     for p in parts:
         body = p.strip().rstrip(seps + " ")
-        # 颜色排除项本身带否定词，绝不能误删。但只能按它的确定形状匹配
-        # （", NOT x" / "(NOT x)" / "（不是x）"）——单看有没有 "not" 会把
+        # 颜色排除项本身带否定词，绝不能误删。只能按它的确定形状匹配
+        # （", NOT x" / "(NOT x)" / "，不是x"）——单看有没有 "not" 会把
         # "the arms are not visible" 也保护起来，那正是要删的东西。
-        has_exclusion = bool(_EXCLUSION_SHAPE.search(p))
+        has_exclusion = bool(re.search(
+            r"[,，]\s*NOT\b|\(\s*NOT\b|（\s*不是|[,，]\s*不是", p, re.I))
         if body and not has_exclusion and rx.search(body):
             dropped.append(body)
             continue
@@ -790,28 +749,15 @@ def run_caption(payload: dict) -> dict:
     # 否则剥离时会碰到刚插进去的 NOT 从句。
     dropped = []
     if backend != "wd14":
-        # 先清掉模型从规则里抄来的孤立排除项（出现过孤零零的「不是青绿」）
-        text, orphans = strip_orphan_exclusions(text, lang)
-        if orphans:
-            dropped.extend(orphans)
-            used.append(f"删抄来的排除项×{len(orphans)}")
         if payload.get("strip_absence", True):
             text, absent = strip_absence_claims(text, lang)
             if absent:
                 dropped.extend(absent)
                 used.append(f"删无据否定×{len(absent)}")
 
-    # 模型漏掉的颜色排除项在这里确定性补齐（可关）
-    added = 0
-    if backend != "wd14" and payload.get("enforce_colours", True):
-        text, added = enforce_colour_exclusions(text, lang)
-        if added:
-            used.append(f"补排除项×{added}")
-
     return {
         "ok": True,
         "text": text,
-        "colours_added": added,
         "tags": tags,
         # 设定稿排版特征 -> 「不保留」候选。不主动写进剧本，由用户勾选。
         "suggest_not_retained": (tags or {}).get("sheet") or [],
@@ -846,8 +792,13 @@ TRANSLATE_SYS = (
     "3. Tokens like [[1]] are opaque placeholders. Copy them through exactly as they are, "
     "in the same order. Never translate, renumber, split or drop them.\n"
     "4. Never output Chinese characters in the translation.\n"
+    # 排除项交给模型在这一趟顺手做掉。之前用正则往中文里插「（不是X）」，
+    # 打了六轮补丁还是会把词切坏（浅棕发色 -> 浅棕发（不是红棕）色）。
+    # 模型漏一条只是少一条排除项，正则出错是把文字弄坏，后者不可接受。
+    "5. Name colours plainly and precisely. Do NOT add any exclusion or 'not ...' "
+    "clause after a colour — a separate step does that.\n"
     # 实测把「三镜教室戏」翻成了 three-mirror classroom scene
-    "5. This is film/animation production shorthand. Read 镜/分镜 as camera shot "
+    "6. This is film/animation production shorthand. Read 镜/分镜 as camera shot "
     "(三镜 = three shots, never 'mirror'), 景别 as shot size, 运镜 as camera move, "
     "画风 as rendering style, 台词 as dialogue, 留白 as pause, 差分 as variant, "
     "设定稿/三视图 as character reference sheet, 铺底 as a sustained background layer, "
@@ -916,7 +867,10 @@ def translate_lines(lines: list[str], backend: str = "auto") -> list[str]:
         # 占位符没还回来（被翻译/丢弃/改号）就退回原文——宁可留中文，
         # 也不能发一段 @ 引用已经断掉的英文。校验会把中文残留报出来。
         if len(_PROTECT.findall(out)) < len(stores[n]) or "[[" in out:
-            out = src
+            items[idx] = src
+            continue
+        # 翻完才补排除项：此时一定是英文，\b 词边界让插入位置确定
+        out, _ = add_colour_exclusions(out)
         items[idx] = out
     return items
 

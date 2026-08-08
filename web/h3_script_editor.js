@@ -116,9 +116,16 @@ export function applyTranslations(script, map) {
     return out;
 }
 
-/** 需要翻译的中文散文 */
+/**
+ * 保存时要交给 LLM 处理的散文。
+ *
+ * 不只是中文——英文描述也要走这一趟，因为颜色排除项是在同一次调用里加的
+ * （H3 要求每个颜色写明不许漂向哪个邻近色，否则黑发会飘成橙发）。
+ * 已经带过排除项的跳过，避免重复处理。
+ */
 export function needsTranslation(script) {
-    return prosePieces(script).filter(hasCJK);
+    return prosePieces(script).filter(
+        (t) => hasCJK(t) || (/[a-z]{3}/i.test(t) && !/,\s*NOT\b/i.test(t)));
 }
 
 export function blankScript() {

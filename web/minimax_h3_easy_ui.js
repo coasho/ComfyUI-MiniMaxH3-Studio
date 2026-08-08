@@ -1152,7 +1152,7 @@ function hasScript(node) {
     if (!s) return false;
     if (s.shots?.length) return true;
     if (Object.values(s.sections || {}).some((v) => String(v || "").trim())) return true;
-    if (s.notRetained?.length) return true;
+    if (s.notRetained?.length || s.taskTypes?.length) return true;
     return Object.values(s.media || {}).some((m) => m?.role);
 }
 
@@ -1180,19 +1180,20 @@ function installScriptEditorButton(node) {
         return n ? `📝 编辑剧本（${n} 镜 · 已接管提示词）` : "📝 编辑剧本（已接管提示词）";
     };
     const w = node.addWidget("button", label(), null, () => {
+        // 返回 true = 关闭弹窗；返回字符串 = 保存没生效，弹窗留着并显示这句话
         openScriptModal(node, scriptMediaList(node), (script) => {
             node.properties[SCRIPT_PROP] = script;
             w.name = label();
-            if (hasScript(node)) {
-                // 把拼好的提示词回写到 prompt 框，避免「节点上看到的」与「实际发送的」是两回事。
-                // 剧本是唯一真相源，prompt 框是它的只读派生视图。
-                syncPromptFromScript(node);
-            } else {
-                // 空剧本静默返回过一次，用户以为保存失效；这里说清楚。
-                alert("剧本还是空的，提示词框未改动。\n\n" +
-                      "至少填一项：全局设置里的主体定义/画风/环境音/配乐，或添加一个分镜。");
-            }
             node.setDirtyCanvas?.(true, true);
+            if (!hasScript(node)) {
+                // 空剧本静默返回过一次，用户以为保存失效；这里说清楚，且不能把编辑器一起关掉。
+                return "剧本还是空的，提示词框未改动。至少填一项：" +
+                       "全局设置里的整体概述 / 画风 / 环境音 / 配乐，或添加一个分镜。";
+            }
+            // 把拼好的提示词回写到 prompt 框，避免「节点上看到的」与「实际发送的」是两回事。
+            // 剧本是唯一真相源，prompt 框是它的只读派生视图。
+            syncPromptFromScript(node);
+            return true;
         });
     });
     w.serialize = false;

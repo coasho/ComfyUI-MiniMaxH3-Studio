@@ -38,24 +38,26 @@ const CSS = `
   align-items:center;justify-content:center;backdrop-filter:blur(3px)}
 .h3m{--bg:#1e2027;--bg2:#252831;--bg3:#2d313c;--line:#363b47;--txt:#e8eaee;--dim:#8b93a1;
   --accent:#4d8dff;--warn:#ff7a7a;--ok:#67c98a;
-  background:var(--bg);color:var(--txt);width:min(1320px,96vw);height:min(900px,94vh);
+  background:var(--bg);color:var(--txt);width:min(1560px,97vw);height:min(1040px,95vh);
   border-radius:14px;display:flex;flex-direction:column;overflow:hidden;
   box-shadow:0 24px 70px rgba(0,0,0,.6);border:1px solid var(--line);
-  font:13.5px/1.6 system-ui,"Segoe UI","Microsoft YaHei",sans-serif}
+  font:var(--h3m-fs,15px)/1.6 system-ui,"Segoe UI","Microsoft YaHei",sans-serif}
 .h3m *{box-sizing:border-box}
+.h3m-zoom{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.h3m-zoom .h3m-mini{min-width:34px;text-align:center;font-variant-numeric:tabular-nums}
 .h3m-hd{display:flex;align-items:center;gap:16px;padding:13px 18px;background:var(--bg2);
   border-bottom:1px solid var(--line);flex:0 0 auto}
-.h3m-hd h2{margin:0;font-size:15px;font-weight:600;letter-spacing:.3px}
+.h3m-hd h2{margin:0;font-size:calc(var(--h3m-fs,15px)*1.111);font-weight:600;letter-spacing:.3px}
 .h3m-main{flex:1;display:flex;min-height:0}
 /* 时间轴是横向的东西，塞进 258px 窄栏根本看不清刻度。提到顶上占满宽度。 */
 .h3m-tlbar{flex:0 0 auto;padding:10px 18px 6px;background:var(--bg2);
   border-bottom:1px solid var(--line)}
 .h3m-tlbar .h3m-tl{height:40px}
 /* 导航分组：设定（整片）与分镜（时间线）不是同一层东西 */
-.h3m-grp{font-size:10.5px;color:var(--dim);letter-spacing:.6px;padding:10px 10px 4px;
+.h3m-grp{font-size:calc(var(--h3m-fs,15px)*0.778);color:var(--dim);letter-spacing:.6px;padding:10px 10px 4px;
   text-transform:uppercase}
 .h3m-grp:first-child{padding-top:2px}
-.h3m-rail{width:258px;flex:0 0 auto;border-right:1px solid var(--line);background:var(--bg2);
+.h3m-rail{width:calc(var(--h3m-fs,15px)*18.7);flex:0 0 auto;border-right:1px solid var(--line);background:var(--bg2);
   display:flex;flex-direction:column;min-height:0}
 .h3m-rail-top{padding:12px 12px 8px;flex:0 0 auto}
 .h3m-rail-list{flex:1;overflow:auto;padding:0 10px 12px}
@@ -63,7 +65,7 @@ const CSS = `
 /* 内容列限宽：右栏可以有 970px，但一行塞 110 个汉字没法扫读。
    限到 62em 左右，剩下的留白比硬撑满一行更好读。 */
 .h3m-pane{flex:1;overflow:auto;padding:18px 22px 28px;min-width:0}
-.h3m-pane>*{max-width:62em}
+.h3m-pane>*{max-width:64em}
 .h3m-ft{flex:0 0 auto;border-top:1px solid var(--line);background:var(--bg2);
   padding:11px 18px;display:flex;gap:12px;align-items:center}
 .h3m-nav{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;
@@ -71,11 +73,11 @@ const CSS = `
 .h3m-nav:hover{background:var(--bg3)}
 .h3m-nav.on{background:#25406e;border-color:var(--accent)}
 .h3m-nav .n{background:var(--bg3);border-radius:5px;min-width:22px;text-align:center;
-  font-size:11.5px;padding:1px 5px;color:var(--dim)}
+  font-size:calc(var(--h3m-fs,15px)*0.852);padding:1px 5px;color:var(--dim)}
 .h3m-nav.on .n{background:var(--accent);color:#fff}
-.h3m-nav .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
-.h3m-nav .b{color:var(--warn);font-size:12px}
-.h3m-nav .gr{cursor:grab;color:#5d6675;font-size:13px;line-height:1;letter-spacing:-1px}
+.h3m-nav .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:calc(var(--h3m-fs,15px)*0.926)}
+.h3m-nav .b{color:var(--warn);font-size:calc(var(--h3m-fs,15px)*0.889)}
+.h3m-nav .gr{cursor:grab;color:#5d6675;font-size:calc(var(--h3m-fs,15px)*0.963);line-height:1;letter-spacing:-1px}
 .h3m-nav.drag{opacity:.4}
 .h3m-nav.over{box-shadow:inset 0 2px 0 var(--accent)}
 .h3m-nav.over-end{box-shadow:inset 0 -2px 0 var(--accent)}
@@ -86,34 +88,34 @@ const CSS = `
 .h3m-ins i{display:block;width:100%;height:2px;border-radius:2px;background:transparent;
   transition:background .1s}
 .h3m-ins:hover i{display:none}
-.h3m-ins span{display:none;font-size:11px;color:#a8c6ff;white-space:nowrap}
+.h3m-ins span{display:none;font-size:calc(var(--h3m-fs,15px)*0.815);color:#a8c6ff;white-space:nowrap}
 .h3m-ins:hover span{display:block}
 
 /* 可折叠区块：一次性配置默认收起，标题行给出摘要，不用展开也知道设了什么 */
 .h3m-sec{border:1px solid var(--line);border-radius:9px;margin-bottom:12px;background:var(--bg2)}
 .h3m-sec>summary{list-style:none;cursor:pointer;padding:9px 12px;display:flex;
-  align-items:center;gap:9px;font-size:13px;font-weight:600;user-select:none}
+  align-items:center;gap:9px;font-size:calc(var(--h3m-fs,15px)*0.963);font-weight:600;user-select:none}
 .h3m-sec>summary::-webkit-details-marker{display:none}
-.h3m-sec>summary::before{content:"▸";color:var(--dim);font-size:11px;transition:transform .12s}
+.h3m-sec>summary::before{content:"▸";color:var(--dim);font-size:calc(var(--h3m-fs,15px)*0.815);transition:transform .12s}
 .h3m-sec[open]>summary::before{transform:rotate(90deg)}
 .h3m-sec>summary:hover{background:var(--bg3);border-radius:8px}
-.h3m-sec>summary .sum{margin-left:auto;font-weight:400;font-size:11.5px;color:var(--dim);
+.h3m-sec>summary .sum{margin-left:auto;font-weight:400;font-size:calc(var(--h3m-fs,15px)*0.852);color:var(--dim);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:56%}
 /* details 折叠时必须显式藏掉内容：给 .bd 设了 display 之后，
    浏览器默认的「非 summary 子元素隐藏」规则就失效了，内容会溢出在外面。 */
 .h3m-sec>.bd{display:none;padding:2px 12px 12px}
 .h3m-sec[open]>.bd{display:block}
-.h3m-cnt{font-weight:400;font-size:11.5px;color:var(--dim);margin-left:6px}
+.h3m-cnt{font-weight:400;font-size:calc(var(--h3m-fs,15px)*0.852);color:var(--dim);margin-left:6px}
 
 /* 校验问题清单：可点，点了跳到出问题的地方 */
 .h3m-issues{position:absolute;left:14px;right:14px;bottom:52px;max-height:46%;overflow:auto;
   background:var(--bg2);border:1px solid var(--line);border-radius:10px;z-index:15;
   box-shadow:0 -8px 26px rgba(0,0,0,.45);padding:6px}
 .h3m-issue{display:flex;gap:9px;align-items:flex-start;padding:7px 10px;border-radius:7px;
-  font-size:12px;line-height:1.6;cursor:pointer}
+  font-size:calc(var(--h3m-fs,15px)*0.889);line-height:1.6;cursor:pointer}
 .h3m-issue:hover{background:var(--bg3)}
 .h3m-issue .w{color:var(--warn);flex:0 0 auto}
-.h3m-issue .go{margin-left:auto;color:var(--accent);font-size:11px;white-space:nowrap;flex:0 0 auto}
+.h3m-issue .go{margin-left:auto;color:var(--accent);font-size:calc(var(--h3m-fs,15px)*0.815);white-space:nowrap;flex:0 0 auto}
 .h3m-stat{cursor:pointer;user-select:none;border-radius:6px;padding:2px 8px}
 .h3m-stat:hover{background:var(--bg3)}
 
@@ -122,16 +124,16 @@ const CSS = `
   border-radius:9px;box-shadow:0 10px 30px rgba(0,0,0,.55);padding:4px;min-width:210px;
   max-height:240px;overflow:auto}
 .h3m-ac-item{display:flex;gap:8px;align-items:center;padding:6px 9px;border-radius:6px;
-  font-size:12.5px;cursor:pointer;white-space:nowrap}
+  font-size:calc(var(--h3m-fs,15px)*0.926);cursor:pointer;white-space:nowrap}
 .h3m-ac-item.on{background:#25406e}
 .h3m-ac-item .k{flex:0 0 auto}
 .h3m-ac-item .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
-.h3m-ac-item .id{font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--dim)}
-.h3m-ac-empty{padding:7px 10px;font-size:12px;color:var(--dim)}
+.h3m-ac-item .id{font-family:ui-monospace,Consolas,monospace;font-size:calc(var(--h3m-fs,15px)*0.778);color:var(--dim)}
+.h3m-ac-empty{padding:7px 10px;font-size:calc(var(--h3m-fs,15px)*0.889);color:var(--dim)}
 
 .h3m-tl{position:relative;height:34px;border-radius:6px;border:1px solid var(--line);
   overflow:hidden;margin:5px 0 4px;user-select:none;background:#191b21}
-.h3m-seg{position:absolute;top:0;bottom:0;display:grid;place-items:center;font-size:10.5px;
+.h3m-seg{position:absolute;top:0;bottom:0;display:grid;place-items:center;font-size:calc(var(--h3m-fs,15px)*0.778);
   color:#cfd5e0;cursor:pointer;overflow:hidden;white-space:nowrap;transition:filter .12s}
 .h3m-seg:hover{filter:brightness(1.3)}
 .h3m-seg.on{outline:2px solid var(--accent);outline-offset:-2px;z-index:1}
@@ -140,18 +142,18 @@ const CSS = `
   border-radius:2px;background:#7d879a}
 .h3m-grip:hover::after,.h3m-grip.drag::after{background:var(--accent);top:0;bottom:0}
 .h3m-bub{position:absolute;top:-24px;transform:translateX(-50%);background:var(--accent);
-  color:#fff;font-size:11px;padding:1px 7px;border-radius:5px;white-space:nowrap;
+  color:#fff;font-size:calc(var(--h3m-fs,15px)*0.815);padding:1px 7px;border-radius:5px;white-space:nowrap;
   pointer-events:none;z-index:4}
-.h3m-ruler{position:relative;height:13px;color:var(--dim);font-size:10px}
+.h3m-ruler{position:relative;height:13px;color:var(--dim);font-size:calc(var(--h3m-fs,15px)*0.741)}
 .h3m-ruler span{position:absolute;transform:translateX(-50%)}
 
-.h3m h3{margin:0 0 5px;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:7px}
-.h3m-tag{font-size:10px;font-weight:400;padding:0 6px;border-radius:9px;line-height:16px}
+.h3m h3{margin:0 0 5px;font-size:calc(var(--h3m-fs,15px)*1.0);font-weight:600;display:flex;align-items:center;gap:7px}
+.h3m-tag{font-size:calc(var(--h3m-fs,15px)*0.741);font-weight:400;padding:0 6px;border-radius:9px;line-height:16px}
 .h3m-tag.un{background:#3a3320;border:1px solid #6b5a2a;color:#e0c476}
-.h3m-hint{color:var(--dim);font-size:11.5px;line-height:1.55;margin-bottom:9px}
+.h3m-hint{color:var(--dim);font-size:calc(var(--h3m-fs,15px)*0.852);line-height:1.55;margin-bottom:9px}
 .h3m-fld{margin-bottom:16px}
 .h3m-row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
-.h3m-lab{color:var(--dim);font-size:11.5px}
+.h3m-lab{color:var(--dim);font-size:calc(var(--h3m-fs,15px)*0.852)}
 .h3m input,.h3m select,.h3m textarea{background:var(--bg3);border:1px solid var(--line);
   color:var(--txt);border-radius:6px;padding:6px 9px;font:inherit;outline:none;max-width:100%}
 .h3m input:focus,.h3m select:focus,.h3m textarea:focus{border-color:var(--accent)}
@@ -163,7 +165,7 @@ const CSS = `
 .h3m-btn.pri{background:var(--accent);border-color:#5c99ff}
 .h3m-btn.pri:hover{filter:brightness(1.1)}
 .h3m-btn.gh{background:transparent;color:var(--dim)}
-.h3m-btn.sm{padding:3px 9px;font-size:12px}
+.h3m-btn.sm{padding:3px 9px;font-size:calc(var(--h3m-fs,15px)*0.889)}
 .h3m-btn.full{width:100%}
 .h3m-step{display:inline-flex;align-items:center}
 .h3m-step button{width:26px;padding:6px 0;background:var(--bg3);border:1px solid var(--line);
@@ -175,43 +177,43 @@ const CSS = `
 .h3m-line{border:1px solid var(--line);border-radius:9px;padding:11px 12px;margin-bottom:9px;background:var(--bg2)}
 .h3m-line-hd{display:flex;gap:9px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
 .h3m-chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--line);
-  border-radius:22px;padding:3px 11px 3px 3px;font-size:12px;cursor:pointer;user-select:none}
+  border-radius:22px;padding:3px 11px 3px 3px;font-size:calc(var(--h3m-fs,15px)*0.889);cursor:pointer;user-select:none}
 .h3m-chip:hover{border-color:#4a5262}
 .h3m-chip.on{background:#25406e;border-color:var(--accent)}
 .h3m-chip img{width:24px;height:24px;border-radius:50%;object-fit:cover}
-.h3m-chip .ic{width:24px;height:24px;border-radius:50%;background:#454b5a;display:grid;place-items:center;font-size:12px}
-.h3m-note{border-radius:8px;padding:9px 12px;font-size:12px;line-height:1.65;margin-bottom:12px}
+.h3m-chip .ic{width:24px;height:24px;border-radius:50%;background:#454b5a;display:grid;place-items:center;font-size:calc(var(--h3m-fs,15px)*0.889)}
+.h3m-note{border-radius:8px;padding:9px 12px;font-size:calc(var(--h3m-fs,15px)*0.889);line-height:1.65;margin-bottom:12px}
 .h3m-note.warn{background:#3a2424;border:1px solid #6e3636;color:#ffb8b8}
 .h3m-banner{display:flex;gap:10px;align-items:flex-start;background:#3a2f1e;border:1px solid #6e5a2f;
-  color:#f0d9a6;padding:9px 14px;font-size:12px;line-height:1.6;flex:0 0 auto}
+  color:#f0d9a6;padding:9px 14px;font-size:calc(var(--h3m-fs,15px)*0.889);line-height:1.6;flex:0 0 auto}
 .h3m-banner div{white-space:pre-wrap;flex:1;min-width:0}
 .h3m-banner button{margin-left:auto;background:transparent;border:none;color:inherit;cursor:pointer;font:inherit}
-.h3m-mini{color:var(--dim);font-size:11.5px}
+.h3m-mini{color:var(--dim);font-size:calc(var(--h3m-fs,15px)*0.852)}
 .h3m-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:9px}
 .h3m-grid label{display:flex;flex-direction:column;gap:4px}
-.h3m-grid label>span{color:var(--dim);font-size:11.5px}
+.h3m-grid label>span{color:var(--dim);font-size:calc(var(--h3m-fs,15px)*0.852)}
 .h3m-cks{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:6px}
 .h3m-ck{display:flex;gap:7px;align-items:flex-start;padding:6px 9px;border-radius:7px;
   border:1px solid var(--line);background:var(--bg2);cursor:pointer}
 .h3m-ck.on{background:#25406e;border-color:var(--accent)}
 .h3m-ck input{margin-top:3px}
 .h3m-ck input:disabled{opacity:.7}
-.h3m-ck em{font-style:normal;color:var(--dim);font-size:11px;display:block}
-.h3m-auto{margin-left:7px;font-size:10px;padding:0 6px;border-radius:9px;line-height:16px;
+.h3m-ck em{font-style:normal;color:var(--dim);font-size:calc(var(--h3m-fs,15px)*0.815);display:block}
+.h3m-auto{margin-left:7px;font-size:calc(var(--h3m-fs,15px)*0.741);padding:0 6px;border-radius:9px;line-height:16px;
   background:#1e3a2a;border:1px solid #2f6448;color:#67c98a;white-space:nowrap}
 /* 保存遮罩：翻译要十几秒，底栏小字看不见，得盖住整个弹窗 */
 .h3m-busy{position:absolute;inset:0;background:rgba(20,22,27,.86);z-index:20;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
   backdrop-filter:blur(2px)}
-.h3m-busy .ttl{font-size:15px;font-weight:600}
-.h3m-busy .sub{font-size:12.5px;color:var(--dim);max-width:70%;text-align:center;line-height:1.7}
+.h3m-busy .ttl{font-size:calc(var(--h3m-fs,15px)*1.111);font-weight:600}
+.h3m-busy .sub{font-size:calc(var(--h3m-fs,15px)*0.926);color:var(--dim);max-width:70%;text-align:center;line-height:1.7}
 .h3m-busy .bar{width:min(420px,62%);height:5px;border-radius:3px;background:var(--bg3);overflow:hidden}
 .h3m-busy .bar i{display:block;height:100%;width:36%;border-radius:3px;background:var(--accent);
   animation:h3mslide 1.1s ease-in-out infinite}
 @keyframes h3mslide{0%{margin-left:-36%}100%{margin-left:100%}}
-.h3m-busy .el{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dim)}
+.h3m-busy .el{font-family:ui-monospace,Consolas,monospace;font-size:calc(var(--h3m-fs,15px)*0.889);color:var(--dim)}
 .h3m-pick{display:inline-flex;align-items:center;background:transparent;color:var(--dim);
-  border:1px dashed var(--line);border-radius:22px;padding:3px 11px;font-size:12px;
+  border:1px dashed var(--line);border-radius:22px;padding:3px 11px;font-size:calc(var(--h3m-fs,15px)*0.889);
   cursor:pointer;user-select:none}
 .h3m-pick:hover{border-color:var(--accent);border-style:solid;color:var(--txt)}
 
@@ -220,20 +222,20 @@ const CSS = `
 .h3m-ent.dim{opacity:.72}
 .h3m-ent-hd{display:flex;gap:9px;align-items:center;margin-bottom:9px;flex-wrap:wrap}
 .h3m-ent-hd input.nm{width:132px;font-weight:600}
-.h3m-id{font-family:ui-monospace,Consolas,monospace;font-size:11px;background:#233a63;
+.h3m-id{font-family:ui-monospace,Consolas,monospace;font-size:calc(var(--h3m-fs,15px)*0.815);background:#233a63;
   border:1px solid #35558f;color:#a8c6ff;border-radius:5px;padding:1px 7px;white-space:nowrap}
 .h3m-id.none{background:#33363f;border-color:#454b5a;color:var(--dim)}
 .h3m-bind{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 9px;margin-top:7px;
   border:1px dashed var(--line);border-radius:8px}
 .h3m-beat{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;margin-bottom:7px;
   border:1px solid var(--line);border-radius:8px;background:var(--bg2)}
-.h3m-prev{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:#9fd2b0;
+.h3m-prev{font-family:ui-monospace,Consolas,monospace;font-size:calc(var(--h3m-fs,15px)*0.852);color:#9fd2b0;
   background:#1b2620;border:1px solid #2f4a39;border-radius:7px;padding:7px 10px;margin-top:7px;
   white-space:pre-wrap;word-break:break-word}
 .h3m-prev.bad{color:#ffb8b8;background:#2b1e1e;border-color:#5d3434}
 .h3m-refs{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;align-items:center}
 .h3m-ref{background:#233a63;border:1px solid #35558f;color:#a8c6ff;border-radius:14px;
-  padding:1px 10px;font-size:11.5px;cursor:pointer;user-select:none}
+  padding:1px 10px;font-size:calc(var(--h3m-fs,15px)*0.852);cursor:pointer;user-select:none}
 .h3m-ref:hover{filter:brightness(1.25)}
 `;
 
@@ -339,8 +341,23 @@ function combo(presets, value, onChange) {
  * @param onVoicePicked(entry) 可选。生成好的音色落盘后调它，由调用方在图里建
  *   LoadAudio 节点并接进 media 口，返回新的 mediaKey；返回空则只落盘不绑定。
  */
+/** 字号偏好跨会话记住——每次打开都要重调一遍是没人受得了的 */
+const FS_KEY = "minimax_h3_script_fs";
+const FS_MIN = 12;
+const FS_MAX = 22;
+const FS_DEFAULT = 15;
+
+function savedFontPx() {
+    try {
+        const v = parseFloat(localStorage.getItem(FS_KEY));
+        if (Number.isFinite(v)) return Math.min(FS_MAX, Math.max(FS_MIN, v));
+    } catch { /* 隐私模式下 localStorage 会抛 */ }
+    return FS_DEFAULT;
+}
+
 export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     ensureStyle();
+    let fontPx = savedFontPx();
     const S = migrateScript(node.properties?.[SCRIPT_PROP]);
     let sel = S.shots.length ? 0 : "cast";
     let lastRemoved = null;          // 「不保留」最近移除的一条，供撤销
@@ -369,9 +386,29 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     hd.append(E("span", "h3m-lab", "默认语言"),
               dd(LANGUAGES, S.language || "Chinese", (v) => { S.language = v; draw(); }));
     const sp0 = E("div"); sp0.style.flex = "1"; hd.append(sp0);
+
+    // 字号档位。整个弹窗的字号都是 calc(var(--h3m-fs) * k)，改这一个变量就整体缩放。
+    const zoomWrap = E("div", "h3m-zoom");
+    const zoomLab = E("span", "h3m-mini");
+    const applyFs = (px) => {
+        fontPx = Math.min(FS_MAX, Math.max(FS_MIN, px));
+        box.style.setProperty("--h3m-fs", fontPx + "px");
+        zoomLab.textContent = fontPx + "px";
+        try { localStorage.setItem(FS_KEY, String(fontPx)); } catch { /* 隐私模式 */ }
+    };
+    const smaller = E("button", "h3m-btn sm gh", "A−");
+    smaller.title = "缩小字号";
+    smaller.onclick = () => applyFs(fontPx - 1);
+    const bigger = E("button", "h3m-btn sm gh", "A+");
+    bigger.title = "放大字号";
+    bigger.onclick = () => applyFs(fontPx + 1);
+    zoomWrap.append(smaller, zoomLab, bigger);
+    hd.append(zoomWrap);
+
     const x = E("button", "h3m-btn gh", "✕");
     x.onclick = () => close();
     hd.append(x);
+    applyFs(fontPx);
 
     /* --------------------------------------------------------- 内嵌提示条 */
     const banner = E("div", "h3m-banner");

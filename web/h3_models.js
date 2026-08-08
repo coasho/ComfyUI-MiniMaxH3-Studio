@@ -36,7 +36,7 @@ const CSS = `
   --accent:#4d8dff;--warn:#ff7a7a;--ok:#67c98a;
   background:var(--bg);color:var(--txt);width:min(880px,95vw);max-height:92vh;border-radius:13px;
   border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;
-  font:13.5px/1.6 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
+  font:15px/1.6 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
 .h3d *{box-sizing:border-box}
 .h3d-hd{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg2);
   border-bottom:1px solid var(--line)}

@@ -16,7 +16,7 @@ import {
     SECTIONS, MEDIA_ROLES, ENTITY_KINDS, BEAT_KINDS,
     CAMERA_MOTIONS, CAMERA_AMPLITUDE, CAMERA_SPEED,
     SHOT_SIZES, CAMERA_ANGLES, TRANSITIONS, VOICE_MODES, CONTINUITY,
-    DELIVERY_PRESETS, LANGUAGES, TASK_TYPES,
+    DELIVERY_PRESETS, LANGUAGES, TASK_TYPES, taskTypes,
     SPEECH, spokenChars, speechSeconds,
 } from "./h3_script_editor.js";
 import { framingWarning } from "./h3_grammar.js";
@@ -195,7 +195,10 @@ const CSS = `
   border:1px solid var(--line);background:var(--bg2);cursor:pointer}
 .h3m-ck.on{background:#25406e;border-color:var(--accent)}
 .h3m-ck input{margin-top:3px}
+.h3m-ck input:disabled{opacity:.7}
 .h3m-ck em{font-style:normal;color:var(--dim);font-size:11px;display:block}
+.h3m-auto{margin-left:7px;font-size:10px;padding:0 6px;border-radius:9px;line-height:16px;
+  background:#1e3a2a;border:1px solid #2f6448;color:#67c98a;white-space:nowrap}
 /* 保存遮罩：翻译要十几秒，底栏小字看不见，得盖住整个弹窗 */
 .h3m-busy{position:absolute;inset:0;background:rgba(20,22,27,.86);z-index:20;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
@@ -1045,24 +1048,42 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         pane.append(bar);
     }
 
+    /**
+     * 编辑器里拿不到真正的 <Picture N>/<Audio N>（那要等节点的运行时连线），
+     * 但 taskTypes() 只看某个 mediaKey 有没有 token。给每件素材一个占位就够了。
+     */
+    function fakeTokens() {
+        const m = {};
+        for (const it of mediaList) m[it.key] = "<ref>";
+        return m;
+    }
+
     /* ------------------------------------------------------- 全局面板 */
     function drawGlobal() {
-        const picked = TASK_TYPES.filter((t) => S.taskTypes.includes(t.id)).map((t) => t.label);
+        // 实际会发出去的是「勾选 ∪ 推导」。只显示勾选项会骗人：绑了音色但没勾
+        // audio reference，模型就不把音频当音色参考用，两个角色会是同一把嗓子。
+        const effective = taskTypes(S, fakeTokens());
+        const picked = TASK_TYPES.filter((t) => effective.includes(t.id)).map((t) => t.label);
         const f00 = section("任务类型", { open: false, summary: picked.join(" + ") || "未选" });
         f00.body.append(E("div", "h3m-hint",
-            "官方词表，可多选组合。生成时作为 summary 的方括号前缀发送，例如 [reference generation + audio reference]。"));
+            "官方词表。生成时作为 summary 的方括号前缀发送，例如 [reference generation + audio reference]。" +
+            "绑了参考图/音色/首尾帧会自动带上对应项，不用手勾。"));
         const cks = E("div", "h3m-cks");
         for (const t of TASK_TYPES) {
-            const on = S.taskTypes.includes(t.id);
-            const l = E("label", "h3m-ck" + (on ? " on" : ""));
-            const cb = E("input"); cb.type = "checkbox"; cb.checked = on;
+            const manual = S.taskTypes.includes(t.id);
+            const auto = effective.includes(t.id) && !manual;
+            const l = E("label", "h3m-ck" + (manual || auto ? " on" : ""));
+            const cb = E("input"); cb.type = "checkbox"; cb.checked = manual || auto;
+            cb.disabled = auto;                    // 推导出来的取消不掉，取消了也会被加回去
             cb.addEventListener("change", () => {
                 if (cb.checked) S.taskTypes.push(t.id);
                 else S.taskTypes = S.taskTypes.filter((y) => y !== t.id);
                 draw();
             });
             const body = E("div");
-            body.append(E("div", null, `${t.label}　${t.en}`), E("em", null, t.hint));
+            const head = E("div", null, `${t.label}　${t.en}`);
+            if (auto) head.append(E("span", "h3m-auto", "已按绑定自动带上"));
+            body.append(head, E("em", null, t.hint));
             l.append(cb, body);
             cks.append(l);
         }

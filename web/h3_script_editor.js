@@ -374,6 +374,41 @@ export function beatSentence(beat, script, plan) {
 }
 
 /**
+ * summary 开头方括号里的任务类型。
+ *
+ * 必须从「实际绑了什么」推导，不能只用勾选框。H3 靠这一行知道有哪几条
+ * 参考通路生效：绑了音色却没写 audio reference，模型就不会把音频当音色参考用
+ * ——实测两个角色都拿第一条音频的嗓子说话，第二个音色完全没生效。
+ * 用户勾的项照样保留（并集），推导只补不减。
+ */
+export function taskTypes(script, mediaTokens = {}) {
+    const picked = new Set((script.taskTypes || [])
+        .filter((t) => TASK_TYPES.some((x) => x.id === t)));
+    const roles = { image: new Set(), audio: new Set(), video: new Set() };
+    for (const [key, cfg] of Object.entries(script.media || {})) {
+        if (cfg?.role && mediaTokens[key]) roles[cfg.kind || "image"]?.add(cfg.role);
+    }
+    let refBinding = false;
+    let voiceBinding = false;
+    for (const e of script.entities || []) {
+        if ((e.bindings || []).some((b) => mediaTokens[b.mediaKey])) refBinding = true;
+        if (mediaTokens[e.voiceKey]) voiceBinding = true;
+    }
+
+    if (roles.image.has("first_frame") || roles.image.has("last_frame")) picked.add("keyframe_completion");
+    if (refBinding) picked.add("reference_generation");
+    if (roles.video.has("edit_src")) picked.add("video_editing");
+    if (roles.video.has("continue")) picked.add("video_continuation");
+    if (roles.audio.has("copy_full") || roles.audio.has("copy_part")) picked.add("audio_reuse");
+    // 音色绑定、配乐风格、环境音风格都是「借不抄」，官方归到 audio reference
+    if (voiceBinding || roles.audio.has("bgm") || roles.audio.has("ambience")) picked.add("audio_reference");
+
+    // 按 TASK_TYPES 的声明顺序输出，跟官方示例的排列一致
+    return TASK_TYPES.filter((x) => picked.has(x.id)).map((x) => x.id);
+}
+
+
+/**
  * 把结构化剧本拼成官方参考模式六段式提示词。
  * mediaTokens: { [mediaKey]: "<Picture 1>" | "<Audio 1>" | ... }
  */
@@ -433,7 +468,7 @@ export function assemble(script, mediaTokens = {}) {
     if (subj.length) S.push("subject_definitions: " + subj.join(" "));
 
     /* --- summary --- */
-    const types = (script.taskTypes || []).filter((t) => TASK_TYPES.some((x) => x.id === t));
+    const types = taskTypes(script, mediaTokens);
     const typeText = types.map((t) => TASK_TYPES.find((x) => x.id === t).en).join(" + ");
     const sum = script.sections.summary?.trim();
     if (typeText || sum) {
@@ -491,9 +526,11 @@ export function assemble(script, mediaTokens = {}) {
             const sid = p?.speaker ? ` (${p.speaker})` : "";
             const vToken = p && mediaTokens[p.ent.voiceKey];
             const lang = p?.ent.language?.trim() || script.language;
+            // 语气是用户手写的，常带句号；直接拼会出现「confused.:」这种脏东西
+            const delivery = String(ln.delivery || "").trim().replace(/[.,;:：，。；]+$/, "");
             bits.push(`${who}${sid} speaks` +
                       (vToken ? ` using the voice timbre and delivery referenced from ${vToken},` : "") +
-                      ` ${mode.en}` + (ln.delivery ? `, ${ln.delivery}` : "") +
+                      ` ${mode.en}` + (delivery ? `, ${delivery}` : "") +
                       `: <d>[${lang}] ${dialogueBody(ln.text, ln.continuity)}</d>`);
         }
         body.push(bits.join(" "));

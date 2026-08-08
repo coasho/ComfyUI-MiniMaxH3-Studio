@@ -20,6 +20,7 @@ import {
     SPEECH, spokenChars, speechSeconds,
 } from "./h3_script_editor.js";
 import { framingWarning } from "./h3_grammar.js";
+import { openCaptionDialog } from "./h3_caption.js";
 
 const CSS = `
 .h3m-mask{position:fixed;inset:0;background:rgba(8,9,12,.72);z-index:10000;display:flex;
@@ -607,6 +608,31 @@ export function openScriptModal(node, mediaList, onSave) {
                         (v) => { b.transferTo = v; draw(); },
                         "官方要求 attribute_transfer 必须指定接收方"));
                 }
+                // 从这张参考图反推特征，省得辛辛苦苦配好图还要把外观再手写一遍
+                const media = mediaList.find((m) => m.key === b.mediaKey);
+                const cap = E("button", "h3m-btn sm", "🔍 反推描述");
+                cap.disabled = !media || media.kind !== "image";
+                cap.title = !media ? "先选一个素材"
+                    : media.kind !== "image" ? "目前只支持从图片反推，视频请先抽一帧"
+                    : "读这张图，反推出外观特征填进上面的描述框";
+                cap.onclick = () => openCaptionDialog({
+                    previewUrl: media.previewUrl,
+                    label: media.label,
+                    kind: b.kind || e.kind,
+                    current: e.desc || "",
+                    onApply: (text, mode, notRetained) => {
+                        if (text) {
+                            e.desc = mode === "append" && e.desc?.trim()
+                                ? e.desc.trim() + "\n" + text : text;
+                        }
+                        // 设定稿的白底/三视图排版直接进「不保留」，去重
+                        for (const t of notRetained || []) {
+                            if (!S.notRetained.includes(t)) S.notRetained.push(t);
+                        }
+                        draw();
+                    },
+                });
+                row.append(cap);
                 const rm = E("button", "h3m-btn gh sm", "✕");
                 rm.onclick = () => { e.bindings.splice(j, 1); draw(); };
                 row.append(rm);

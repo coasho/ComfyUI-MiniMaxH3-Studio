@@ -1,4 +1,6 @@
 import { app } from "../../scripts/app.js";
+import { openScriptModal } from "./h3_script_modal.js";
+import { assemble, blankScript, SCRIPT_PROP } from "./h3_script_editor.js";
 
 const NODE_CLASS = "MiniMaxH3Easy";
 const LOADER_CLASS = "MiniMaxH3EasyLoader";
@@ -1113,6 +1115,57 @@ function getInputConnection(canvas) {
     return { targetNode: node };
 }
 
+/** 已连接素材 -> 弹窗用的清单（带缩略图） */
+function scriptMediaList(node) {
+    return normalizeLinks(node).map((link) => {
+        const src = app.graph?.getNodeById?.(link.source_id);
+        const title = src?.title || src?.type || `节点 ${link.source_id}`;
+        const file = src?.widgets?.find?.((w) => /image|audio|video|file/i.test(w?.name || ""))?.value;
+        const label = typeof file === "string" && file ? file : title;
+        let previewUrl = "";
+        if (link.media_type === "image" && typeof file === "string" && file) {
+            previewUrl = `/view?filename=${encodeURIComponent(file)}&type=input`;
+        }
+        return { key: `${link.source_id}:${link.source_slot}`, label, kind: link.media_type, previewUrl };
+    });
+}
+
+/** 素材 key -> <Picture N>/<Audio N>/<Video N>，编号按各类型独立递增 */
+function scriptMediaTokens(node, runtimeLinks) {
+    const counters = { image: 0, video: 0, audio: 0 };
+    const tag = { image: "Picture", video: "Video", audio: "Audio" };
+    const map = {};
+    for (const link of runtimeLinks) {
+        const kind = link.media_type || "image";
+        counters[kind] = (counters[kind] || 0) + 1;
+        map[`${link.source_id}:${link.source_slot}`] = `<${tag[kind] || "Picture"} ${counters[kind]}>`;
+    }
+    return map;
+}
+
+function hasScript(node) {
+    const s = node?.properties?.[SCRIPT_PROP];
+    return Boolean(s?.shots?.length);
+}
+
+function installScriptEditorButton(node) {
+    if (node.__h3ScriptBtn) return;
+    node.__h3ScriptBtn = true;
+    node.properties ||= {};
+    node.properties[SCRIPT_PROP] ||= blankScript();
+    const label = () => (hasScript(node)
+        ? `📝 编辑剧本（${node.properties[SCRIPT_PROP].shots.length} 镜）`
+        : "📝 编辑剧本");
+    const w = node.addWidget("button", label(), null, () => {
+        openScriptModal(node, scriptMediaList(node), (script) => {
+            node.properties[SCRIPT_PROP] = script;
+            w.name = label();
+            node.setDirtyCanvas?.(true, true);
+        });
+    });
+    w.serialize = false;
+}
+
 function buildRuntimePrompt(node, runtimeLinks) {
     const promptWidget = getWidget(node, "prompt");
     const fallback = String(promptWidget?.value || "");
@@ -1176,11 +1229,20 @@ function patchGraphToPrompt() {
             // An upstream node wired into `prompt` (e.g. MiniMaxH3StudioScript) wins over
             // the in-node editor: graphToPrompt already resolved it to ["<id>", slot], and
             // blindly overwriting that used to silently discard the whole upstream chain.
+            // 优先级：外部连线 > 结构化剧本 > 节点内编辑器
             const promptSlot = node.inputs?.find?.((i) => i?.name === "prompt");
             const promptIsLinked = promptSlot?.link != null
                 && Array.isArray(promptNode.inputs.prompt);
             if (!promptIsLinked) {
-                promptNode.inputs.prompt = buildRuntimePrompt(node, runtimeLinks);
+                if (hasScript(node)) {
+                    // 剧本只存内容；六段式、时间码、<d> 标签、<Picture N> 编号在这里补全
+                    promptNode.inputs.prompt = assemble(
+                        node.properties[SCRIPT_PROP],
+                        scriptMediaTokens(node, runtimeLinks),
+                    );
+                } else {
+                    promptNode.inputs.prompt = buildRuntimePrompt(node, runtimeLinks);
+                }
             }
             promptNode.inputs.mode = canonicalOption("mode", getWidgetValue(node, "mode", MODE_IMAGE));
             promptNode.inputs.resolution = canonicalOption("resolution", getWidgetValue(node, "resolution", "480P"));
@@ -3541,6 +3603,7 @@ function installNode(nodeType, nodeData) {
         patchCanvas();
         installQuickCreateCapture(app.canvas);
         installPromptEditorSoon(this);
+        installScriptEditorButton(this);
         const modeWidget = getWidget(this, "mode");
         if (modeWidget) {
             const originalCallback = modeWidget.callback;

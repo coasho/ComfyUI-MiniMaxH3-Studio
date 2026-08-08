@@ -450,7 +450,20 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         S.shots.forEach((sh, i) => {
             const d = E("div", "h3m-seg" + (sel === i ? " on" : ""), String(i + 1));
             d.style.background = shotProblems(i).length ? "#5c3030" : (i % 2 ? "#333b4a" : "#3c4557");
+            d.title = `镜头 ${i + 1}　单击选中，双击从中间劈成两镜`;
             d.onclick = () => { sel = i; draw(); };
+            // 双击劈开：在时间轴上直接插入，比翻到分镜卡上点按钮快
+            d.ondblclick = (ev) => {
+                ev.stopPropagation();
+                const span = shotEnd(i) - S.shots[i].cutAt;
+                if (span < MIN_SHOT * 2) {
+                    notify(`镜头 ${i + 1} 只有 ${span.toFixed(1)}s，劈不出两段。`);
+                    return;
+                }
+                S.shots.splice(i + 1, 0, blankShot(+(S.shots[i].cutAt + span / 2).toFixed(1)));
+                sel = i + 1;
+                draw();
+            };
             segs.push(d); tl.append(d);
         });
         for (let k = 1; k < S.shots.length; k++) {
@@ -543,7 +556,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         railTop.append(E("div", "h3m-lab", "时间轴"));
         if (S.shots.length) {
             railTop.append(buildTimeline(), buildRuler());
-            railTop.append(E("div", "h3m-mini", "拖分界线改分镜长度，点色块切到那一镜"));
+            railTop.append(E("div", "h3m-mini", "拖分界线改长度，点色块切换，双击色块劈成两镜"));
         } else railTop.append(E("div", "h3m-mini", "尚无分镜"));
 
         railList.innerHTML = "";
@@ -1046,6 +1059,22 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             S.shots[i + 1] = sh; S.shots[i] = b;
             sel = i + 1; draw();
         };
+        // 从中间劈开插入。原来只能在末尾追加，想在 1 和 2 之间加一镜
+        // 得先加到最后再一路上移，而上移只交换内容、不动时间点，很别扭。
+        const ins = E("button", "h3m-btn gh", "＋ 在下方插入");
+        ins.title = "把本镜从中间劈成两半，后半段作为新分镜。其他分镜的时间点不动。";
+        ins.onclick = () => {
+            const span = shotEnd(i) - sh.cutAt;
+            if (span < MIN_SHOT * 2) {
+                notify(`镜头 ${i + 1} 只有 ${span.toFixed(1)}s，劈不出两段。` +
+                       `先把它拖长到 ${(MIN_SHOT * 2).toFixed(1)}s 以上。`);
+                return;
+            }
+            const mid = +(sh.cutAt + span / 2).toFixed(1);
+            S.shots.splice(i + 1, 0, blankShot(mid));
+            sel = i + 1;
+            draw();
+        };
         const del = E("button", "h3m-btn gh", "删除本镜");
         del.onclick = () => {
             S.shots.splice(i, 1);
@@ -1053,7 +1082,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             sel = S.shots.length ? Math.max(0, i - 1) : "cast";
             draw();
         };
-        hdr.append(up, down, del);
+        hdr.append(up, down, ins, del);
         pane.append(hdr);
 
         const lenRow = E("div", "h3m-row");

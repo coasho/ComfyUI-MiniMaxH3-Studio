@@ -64,6 +64,19 @@ const CSS = `
 .h3m-nav.on .n{background:var(--accent);color:#fff}
 .h3m-nav .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
 .h3m-nav .b{color:var(--warn);font-size:12px}
+.h3m-nav .gr{cursor:grab;color:#5d6675;font-size:13px;line-height:1;letter-spacing:-1px}
+.h3m-nav.drag{opacity:.4}
+.h3m-nav.over{box-shadow:inset 0 2px 0 var(--accent)}
+.h3m-nav.over-end{box-shadow:inset 0 -2px 0 var(--accent)}
+/* 分镜之间的插入槽：平时只留一条细缝，悬停才展开 */
+.h3m-ins{height:6px;margin:-2px 0;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;border-radius:4px;transition:height .1s,background .1s}
+.h3m-ins:hover{height:20px;background:#25406e}
+.h3m-ins i{display:block;width:100%;height:2px;border-radius:2px;background:transparent;
+  transition:background .1s}
+.h3m-ins:hover i{display:none}
+.h3m-ins span{display:none;font-size:11px;color:#a8c6ff;white-space:nowrap}
+.h3m-ins:hover span{display:block}
 
 .h3m-tl{position:relative;height:34px;border-radius:6px;border:1px solid var(--line);
   overflow:hidden;margin:5px 0 4px;user-select:none;background:#191b21}
@@ -301,7 +314,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     const railTop = E("div", "h3m-rail-top");
     const railList = E("div", "h3m-rail-list");
     const railFt = E("div", "h3m-rail-ft");
-    const addBtn = E("button", "h3m-btn full", "+ 新增分镜");
+    const addBtn = E("button", "h3m-btn full", "+ 在末尾新增分镜");
     addBtn.onclick = () => {
         const last = S.shots.at(-1);
         if (!S.shots.length) S.shots.push(blankShot(0));
@@ -450,20 +463,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         S.shots.forEach((sh, i) => {
             const d = E("div", "h3m-seg" + (sel === i ? " on" : ""), String(i + 1));
             d.style.background = shotProblems(i).length ? "#5c3030" : (i % 2 ? "#333b4a" : "#3c4557");
-            d.title = `镜头 ${i + 1}　单击选中，双击从中间劈成两镜`;
             d.onclick = () => { sel = i; draw(); };
-            // 双击劈开：在时间轴上直接插入，比翻到分镜卡上点按钮快
-            d.ondblclick = (ev) => {
-                ev.stopPropagation();
-                const span = shotEnd(i) - S.shots[i].cutAt;
-                if (span < MIN_SHOT * 2) {
-                    notify(`镜头 ${i + 1} 只有 ${span.toFixed(1)}s，劈不出两段。`);
-                    return;
-                }
-                S.shots.splice(i + 1, 0, blankShot(+(S.shots[i].cutAt + span / 2).toFixed(1)));
-                sel = i + 1;
-                draw();
-            };
             segs.push(d); tl.append(d);
         });
         for (let k = 1; k < S.shots.length; k++) {
@@ -556,7 +556,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         railTop.append(E("div", "h3m-lab", "时间轴"));
         if (S.shots.length) {
             railTop.append(buildTimeline(), buildRuler());
-            railTop.append(E("div", "h3m-mini", "拖分界线改长度，点色块切换，双击色块劈成两镜"));
+            railTop.append(E("div", "h3m-mini", "拖分界线改长度，点色块切到那一镜"));
         } else railTop.append(E("div", "h3m-mini", "尚无分镜"));
 
         railList.innerHTML = "";
@@ -575,15 +575,80 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         g.onclick = () => { sel = "global"; draw(); };
         railList.append(g);
 
+        // 分镜列表：结构操作（插入、排序）都在这里 —— 它们属于列表，
+        // 不属于内容编辑区。插入槽平时是条细缝，悬停才展开成按钮。
+        const insertAt = (idx) => {
+            // idx = 插在第 idx 个位置。从相邻分镜里劈一半出来，其他时间点不动
+            const prev = S.shots[idx - 1];
+            const start = prev ? prev.cutAt : 0;
+            const end = idx < S.shots.length ? S.shots[idx].cutAt : S.duration;
+            const span = end - start;
+            if (span < MIN_SHOT * 2) {
+                notify(`这里只有 ${span.toFixed(1)}s，劈不出两段。先把相邻分镜拖长些。`);
+                return;
+            }
+            S.shots.splice(idx, 0, blankShot(+(start + span / 2).toFixed(1)));
+            if (idx === 0) { S.shots[0].cutAt = 0; S.shots[1].cutAt = +(span / 2).toFixed(1); }
+            sel = idx;
+            draw();
+        };
+        const slot = (idx) => {
+            const s = E("div", "h3m-ins");
+            s.append(E("i"), E("span", null, "＋ 在此插入分镜"));
+            s.title = "在这个位置插入一个新分镜";
+            s.onclick = () => insertAt(idx);
+            return s;
+        };
+
+        let dragFrom = null;
         S.shots.forEach((sh, i) => {
+            railList.append(slot(i));
             const n = E("div", "h3m-nav" + (sel === i ? " on" : ""));
+            n.draggable = true;
+            n.append(E("span", "gr", "⠿"));
             n.append(E("span", "n", String(i + 1)));
-            const title = (sh.description || "").trim().slice(0, 14) || "（未填描述）";
+            const title = (sh.description || "").trim().slice(0, 12) || "（未填描述）";
             n.append(E("span", "t", `${sh.cutAt.toFixed(1)}s  ${title}`));
             if (shotProblems(i).length) n.append(E("span", "b", "●"));
             n.onclick = () => { sel = i; draw(); };
+
+            n.addEventListener("dragstart", (ev) => {
+                dragFrom = i;
+                n.classList.add("drag");
+                ev.dataTransfer.effectAllowed = "move";
+                ev.dataTransfer.setData("text/plain", String(i));
+            });
+            n.addEventListener("dragend", () => {
+                dragFrom = null;
+                railList.querySelectorAll(".h3m-nav").forEach(
+                    (x) => x.classList.remove("drag", "over", "over-end"));
+            });
+            n.addEventListener("dragover", (ev) => {
+                if (dragFrom === null || dragFrom === i) return;
+                ev.preventDefault();
+                const after = ev.offsetY > n.offsetHeight / 2;
+                n.classList.toggle("over", !after);
+                n.classList.toggle("over-end", after);
+            });
+            n.addEventListener("dragleave", () => n.classList.remove("over", "over-end"));
+            n.addEventListener("drop", (ev) => {
+                ev.preventDefault();
+                const from = dragFrom;
+                if (from === null || from === i) return;
+                let to = i + (ev.offsetY > n.offsetHeight / 2 ? 1 : 0);
+                if (from < to) to -= 1;
+                if (from === to) return;
+                // 只换顺序，时间点留在原处 —— 时长是时间轴的事，不该被排序带着跑
+                const times = S.shots.map((x) => x.cutAt);
+                const [moved] = S.shots.splice(from, 1);
+                S.shots.splice(to, 0, moved);
+                S.shots.forEach((x, k) => { x.cutAt = times[k]; });
+                sel = to;
+                draw();
+            });
             railList.append(n);
         });
+        railList.append(slot(S.shots.length));
     }
 
     /** 结构变化时才用它：会重建右栏，输入焦点会丢 */
@@ -1043,38 +1108,8 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         hdr.append(E("h3", null, `镜头 ${i + 1}`));
         hdr.append(E("span", "h3m-mini", `${sh.cutAt.toFixed(1)} – ${shotEnd(i).toFixed(1)}s`));
         const sp = E("div"); sp.style.flex = "1"; hdr.append(sp);
-        const up = E("button", "h3m-btn gh", "↑ 上移");
-        up.disabled = i === 0;
-        up.onclick = () => {
-            const a = S.shots[i - 1];
-            [a.cutAt, sh.cutAt] = [sh.cutAt, a.cutAt];
-            S.shots[i - 1] = sh; S.shots[i] = a;
-            sel = i - 1; draw();
-        };
-        const down = E("button", "h3m-btn gh", "↓ 下移");
-        down.disabled = i === S.shots.length - 1;
-        down.onclick = () => {
-            const b = S.shots[i + 1];
-            [b.cutAt, sh.cutAt] = [sh.cutAt, b.cutAt];
-            S.shots[i + 1] = sh; S.shots[i] = b;
-            sel = i + 1; draw();
-        };
-        // 从中间劈开插入。原来只能在末尾追加，想在 1 和 2 之间加一镜
-        // 得先加到最后再一路上移，而上移只交换内容、不动时间点，很别扭。
-        const ins = E("button", "h3m-btn gh", "＋ 在下方插入");
-        ins.title = "把本镜从中间劈成两半，后半段作为新分镜。其他分镜的时间点不动。";
-        ins.onclick = () => {
-            const span = shotEnd(i) - sh.cutAt;
-            if (span < MIN_SHOT * 2) {
-                notify(`镜头 ${i + 1} 只有 ${span.toFixed(1)}s，劈不出两段。` +
-                       `先把它拖长到 ${(MIN_SHOT * 2).toFixed(1)}s 以上。`);
-                return;
-            }
-            const mid = +(sh.cutAt + span / 2).toFixed(1);
-            S.shots.splice(i + 1, 0, blankShot(mid));
-            sel = i + 1;
-            draw();
-        };
+        // 插入与排序都归左栏列表：那是结构操作，不是内容编辑。
+        // 这里只留跟「当前这一镜」有关的动作。
         const del = E("button", "h3m-btn gh", "删除本镜");
         del.onclick = () => {
             S.shots.splice(i, 1);
@@ -1082,7 +1117,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             sel = S.shots.length ? Math.max(0, i - 1) : "cast";
             draw();
         };
-        hdr.append(up, down, ins, del);
+        hdr.append(del);
         pane.append(hdr);
 
         const lenRow = E("div", "h3m-row");

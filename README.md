@@ -302,6 +302,13 @@ character-free shots impossible to express.
 
 ---
 
+## Credits
+
+The node layer — the single sortable `Media` input, the `@mention` prompt editor, the
+quick-create menu — comes from [nkxx188/ComfyUI-MiniMaxH3-Easy](https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy),
+MIT. This package builds the script editor, captioning, voice studio and model downloader
+on top of it.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

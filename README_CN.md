@@ -282,6 +282,12 @@ v2 恰好搞反了：把景别语气这些散文结构化成下拉框，却把�
 
 ---
 
+## 致谢
+
+节点层——单一可排序的 `Media` 输入、`@` 提及式提示词编辑器、拖线快速建节点——
+来自 [nkxx188/ComfyUI-MiniMaxH3-Easy](https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy)（MIT）。
+本包在它之上做了剧本编辑器、图生文反推、音色工作台和模型下载器。
+
 ## 许可证
 
 MIT，见 [LICENSE](LICENSE)。

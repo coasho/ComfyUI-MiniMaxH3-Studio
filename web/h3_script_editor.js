@@ -526,10 +526,18 @@ export function entityProblems(script) {
             out.push(`实体「${who}」既没有描述也没绑素材，模型只能瞎编。`);
         }
         for (const b of e.bindings || []) {
-            if (!b.mediaKey) continue;
+            if (!b.mediaKey) {
+                out.push(`实体「${who}」有一条素材绑定还没选素材，等于没绑。`);
+                continue;
+            }
             if (bindingRetention(b) === "attribute_transfer" && !b.transferTo) {
                 out.push(`实体「${who}」的绑定是 attribute_transfer，官方要求指定迁移到哪个实体上。`);
             }
+        }
+        // 出镜的人物/物件没绑参考图，H3 只能照描述瞎画——最影响像不像
+        if (k.id in { identity: 1, object: 1 } && e.visible !== false
+            && !(e.bindings || []).some((b) => b.mediaKey)) {
+            out.push(`实体「${who}」没有绑参考图，成片里它长什么样全靠文字描述。`);
         }
         if (e.voiceKey) {
             if (!plan[e.id].speaker) out.push(`实体「${who}」指定了音色但一句台词都没有，这条音色不会生效。`);

@@ -119,6 +119,7 @@ const CSS = `
 .h3m-note.warn{background:#3a2424;border:1px solid #6e3636;color:#ffb8b8}
 .h3m-banner{display:flex;gap:10px;align-items:flex-start;background:#3a2f1e;border:1px solid #6e5a2f;
   color:#f0d9a6;padding:9px 14px;font-size:12px;line-height:1.6;flex:0 0 auto}
+.h3m-banner div{white-space:pre-wrap;flex:1;min-width:0}
 .h3m-banner button{margin-left:auto;background:transparent;border:none;color:inherit;cursor:pointer;font:inherit}
 .h3m-mini{color:var(--dim);font-size:11.5px}
 .h3m-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:9px}
@@ -130,6 +131,17 @@ const CSS = `
 .h3m-ck.on{background:#25406e;border-color:var(--accent)}
 .h3m-ck input{margin-top:3px}
 .h3m-ck em{font-style:normal;color:var(--dim);font-size:11px;display:block}
+/* 保存遮罩：翻译要十几秒，底栏小字看不见，得盖住整个弹窗 */
+.h3m-busy{position:absolute;inset:0;background:rgba(20,22,27,.86);z-index:20;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  backdrop-filter:blur(2px)}
+.h3m-busy .ttl{font-size:15px;font-weight:600}
+.h3m-busy .sub{font-size:12.5px;color:var(--dim);max-width:70%;text-align:center;line-height:1.7}
+.h3m-busy .bar{width:min(420px,62%);height:5px;border-radius:3px;background:var(--bg3);overflow:hidden}
+.h3m-busy .bar i{display:block;height:100%;width:36%;border-radius:3px;background:var(--accent);
+  animation:h3mslide 1.1s ease-in-out infinite}
+@keyframes h3mslide{0%{margin-left:-36%}100%{margin-left:100%}}
+.h3m-busy .el{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dim)}
 .h3m-pick{display:inline-flex;align-items:center;background:transparent;color:var(--dim);
   border:1px dashed var(--line);border-radius:22px;padding:3px 11px;font-size:12px;
   cursor:pointer;user-select:none}
@@ -311,27 +323,44 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     const sp1 = E("div"); sp1.style.flex = "1";
     const cancel = E("button", "h3m-btn gh", "取消");
     cancel.onclick = () => close();
+    /** 保存遮罩。翻译要十几秒，底栏那行小字根本看不见 */
+    function busyOverlay() {
+        const el = E("div", "h3m-busy");
+        const ttl = E("div", "ttl", "正在保存…");
+        const sub = E("div", "sub", "把剧本拼成提示词");
+        const bar = E("div", "bar"); bar.append(E("i"));
+        const el2 = E("div", "el", "0.0s");
+        el.append(ttl, sub, bar, el2);
+        box.style.position = "relative";
+        box.append(el);
+        const t0 = performance.now();
+        const tick = setInterval(() => {
+            el2.textContent = ((performance.now() - t0) / 1000).toFixed(1) + "s";
+        }, 100);
+        return {
+            say(title, detail) { ttl.textContent = title; if (detail) sub.textContent = detail; },
+            done() { clearInterval(tick); el.remove(); },
+        };
+    }
+
     const ok = E("button", "h3m-btn pri", "保存并应用");
     ok.onclick = async () => {
         if (ok.disabled) return;
-        const restore = ok.textContent;
         ok.disabled = true;
         cancel.disabled = true;
+        const busy = busyOverlay();
         try {
-            // 中文剧本要先交给 LLM 译成英文，这一步会花几秒到几十秒，得给反馈
-            const r = await onSave(structuredClone(S), (msg) => {
-                ok.textContent = "…";
-                stat.textContent = msg;
-                stat.style.color = "var(--accent)";
-            });
+            const r = await onSave(structuredClone(S), (msg) => busy.say("正在保存…", msg));
+            busy.done();
             if (r === true || r == null) { close(true); return; }
             notify(String(r));
         } catch (err) {
+            busy.done();
             notify(`保存失败：${err.message}`);
         } finally {
+            busy.done();
             ok.disabled = false;
             cancel.disabled = false;
-            ok.textContent = restore;
             drawStatus();
         }
     };
@@ -678,9 +707,17 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             (e.bindings || []).forEach((b, j) => {
                 const row = E("div", "h3m-bind");
                 row.append(E("span", "h3m-lab", "由素材定义"));
-                row.append(dd([{ id: "", label: "（选素材）" },
+                // 绑的素材已经不在 media 口上了：下拉框会静默回落成空，
+                // 界面看着像「没绑」，保存时才发现提示词里缺参考图。
+                const lost = b.mediaKey && !imgsVids.some((m) => m.key === b.mediaKey);
+                row.append(dd([{ id: "", label: lost ? `⚠ 素材已断开（${b.mediaKey}）` : "（选素材）" },
                                ...imgsVids.map((m) => ({ id: m.key, label: m.label }))],
-                              b.mediaKey, (v) => { b.mediaKey = v; draw(); }));
+                              lost ? "" : b.mediaKey, (v) => { b.mediaKey = v; draw(); }));
+                if (lost) {
+                    const w = E("span", "h3m-mini", "这条绑定失效了，重选一个");
+                    w.style.color = "var(--warn)";
+                    row.append(w);
+                }
                 row.append(dd(ENTITY_KINDS.filter((x) => x.phrase).map((x) => ({ id: x.id, label: x.label })),
                               b.kind, (v) => { b.kind = v; b.retention = ""; draw(); },
                               "官方绑定句：The {内容类型} of <Subject N> is defined by <Picture M>."));

@@ -1173,25 +1173,68 @@ function hasScript(node) {
  *
  * 剧本本身仍存中文，下次打开继续用中文编辑。
  */
+/**
+ * 检查每条素材绑定都能解析成 <Picture N>/<Audio N>。
+ *
+ * assemble() 遇到解析不了的 mediaKey 会直接跳过，于是「界面上明明绑了参考图，
+ * 提示词里一张图都没有」——这种静默丢弃必须拦住，宁可拒绝保存也不能让人
+ * 拿着一份没有参考图的提示词去跑。
+ */
+function unresolvedBindings(node, script, tokens) {
+    const bad = [];
+    const media = scriptMediaList(node);
+    const nameOf = (k) => media.find((m) => m.key === k)?.label || k;
+    for (const e of script.entities || []) {
+        for (const b of e.bindings || []) {
+            if (b.mediaKey && !tokens[b.mediaKey]) {
+                bad.push(`「${e.name || "未命名实体"}」的参考素材 ${nameOf(b.mediaKey)}`);
+            }
+        }
+        if (e.voiceKey && !tokens[e.voiceKey]) {
+            bad.push(`「${e.name || "未命名实体"}」的音色 ${nameOf(e.voiceKey)}`);
+        }
+    }
+    return bad;
+}
+
 async function syncPromptFromScript(node, onProgress) {
     if (!hasScript(node)) return { ok: false };
     const script = node.properties[SCRIPT_PROP];
     let out = script;
     let translated = 0;
 
+    const tokens = scriptMediaTokens(node, normalizeLinks(node));
+    const bad = unresolvedBindings(node, script, tokens);
+    if (bad.length) {
+        throw new Error(
+            `这些素材没有接到节点的 media 口上，提示词里会缺：\n・${bad.join("\n・")}\n` +
+            `请确认对应的 LoadImage / LoadAudio 节点还连在 media 输入上，` +
+            `然后重新打开编辑器在实体卡上重选一次。`);
+    }
+
     const zh = needsTranslation(script);
     if (zh.length) {
-        onProgress?.(`正在把 ${zh.length} 段中文交给模型译成英文…`);
+        onProgress?.(`把 ${zh.length} 段描述交给模型译成英文并补颜色排除项…
+`
+                     + `首次调用要装载 8.3GB 模型，会慢一些`);
         const map = await translateLines(zh);          // 失败就抛，由调用方报出来
         out = applyTranslations(script, map);
         translated = Object.keys(map).length;
     }
 
-    const text = assemble(out, scriptMediaTokens(node, normalizeLinks(node)));
+    const text = assemble(out, tokens);
     const widget = getWidget(node, "prompt");
     if (widget) widget.value = text;
     delete node.properties[PROMPT_DOC_PROP];
     if (node.__h3Editor) renderEditorFromNode(node, true);
+
+    // 拼完再核一次：绑定过素材却一个 <Picture N> 都没出现，说明还是漏了
+    const boundImages = (script.entities || []).some(
+        (e) => (e.bindings || []).some((b) => b.mediaKey));
+    if (boundImages && !/<(Picture|Video) \d+>/.test(text)) {
+        throw new Error("绑定了参考素材，但拼出来的提示词里没有任何 <Picture N>。" +
+                        "提示词框未改动，请把这句话发给开发者。");
+    }
     return { ok: true, translated, total: zh.length };
 }
 
@@ -1262,11 +1305,10 @@ function installScriptEditorButton(node) {
                        "全局设置里的整体概述 / 画风 / 环境音 / 配乐，或添加一个分镜。";
             }
             try {
-                // 中文剧本在这里译成英文再拼装，回写到 prompt 框
+                onProgress?.("检查素材绑定…");
                 await syncPromptFromScript(node, onProgress);
             } catch (err) {
-                return `翻译失败：${err.message}。提示词框未改动——` +
-                       `要么重启 ComfyUI 让翻译服务起来，要么在弹窗里关掉「译成英文」。`;
+                return err.message;
             }
             return true;
         }, (entry) => attachGeneratedVoice(node, entry));

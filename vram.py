@@ -75,6 +75,46 @@ def release_all(reason: str = "") -> int:
     return freed
 
 
+def snapshot() -> dict:
+    """当前显存/内存占用，用来给前端显示释放了多少。"""
+    out = {}
+    try:
+        import torch
+        if torch.cuda.is_available():
+            out["vram_gb"] = round(torch.cuda.memory_reserved() / 2**30, 2)
+    except Exception:
+        pass
+    try:
+        import psutil
+        out["rss_gb"] = round(psutil.Process().memory_info().rss / 2**30, 2)
+    except Exception:
+        pass
+    return out
+
+
+def add_routes(routes) -> None:
+    """给前端一个主动释放的入口。"""
+    from aiohttp import web
+
+    @routes.post("/minimax_h3_studio/release")
+    async def _release(_r):
+        before = snapshot()
+        n = release_all("编辑器请求释放")
+        after = snapshot()
+        return web.json_response({"ok": True, "released": n,
+                                  "before": before, "after": after})
+
+
+def register_routes() -> None:
+    try:
+        from server import PromptServer
+    except Exception:
+        return
+    r = getattr(PromptServer.instance, "routes", None)
+    if r is not None:
+        add_routes(r)
+
+
 def install() -> None:
     """把 free_memory 包一层。重复调用安全。"""
     global _patched

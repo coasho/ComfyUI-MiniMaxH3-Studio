@@ -10,6 +10,11 @@
 
 const API = "/minimax_h3_studio/voice";
 
+/** 音色模型 4GB，关掉工作台就还回去，别等空闲计时器 */
+async function releaseAuxModels() {
+    try { await fetch("/minimax_h3_studio/release", { method: "POST" }); } catch { /* 忽略 */ }
+}
+
 export async function voiceStatus() {
     const r = await fetch(`${API}/status`);
     if (!r.ok) throw new Error(`状态接口返回 ${r.status}`);
@@ -261,6 +266,7 @@ export function openVoiceStudio(opt) {
         window.removeEventListener("keydown", onKey);
         bd.querySelectorAll("audio").forEach((a) => { try { a.pause(); } catch { /* 忽略 */ } });
         mask.remove();
+        releaseAuxModels();
     }
 
     const msg = (t, cls) => { status.textContent = t; status.className = "h3v-msg" + (cls ? " " + cls : ""); };

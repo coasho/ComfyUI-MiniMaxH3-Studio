@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { openScriptModal } from "./h3_script_modal.js";
-import { translateLines } from "./h3_caption.js";
+import { translateLines, releaseAuxModels } from "./h3_caption.js";
 import { assemble, blankScript, SCRIPT_PROP,
          needsTranslation, applyTranslations } from "./h3_script_editor.js";
 
@@ -1227,6 +1227,15 @@ async function syncPromptFromScript(node, onProgress) {
     if (widget) widget.value = text;
     delete node.properties[PROMPT_DOC_PROP];
     if (node.__h3Editor) renderEditorFromNode(node, true);
+
+    // 翻译用的 8.3GB VLM 到这里就没用了。下一步多半是点生成，
+    // 那时 H3 要吃满 16GB，不能让它还占着。
+    if (translated) {
+        const r = await releaseAuxModels();
+        if (r?.before?.vram_gb != null) {
+            console.log(`[MiniMaxH3-Studio] 释放辅助模型：显存 ${r.before.vram_gb} -> ${r.after.vram_gb} GB`);
+        }
+    }
 
     // 拼完再核一次：绑定过素材却一个 <Picture N> 都没出现，说明还是漏了
     const boundImages = (script.entities || []).some(

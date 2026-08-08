@@ -22,6 +22,7 @@ import {
 import { framingWarning } from "./h3_grammar.js";
 import { openCaptionDialog } from "./h3_caption.js";
 import { openVoiceStudio } from "./h3_voice.js";
+import { releaseAuxModels } from "./h3_caption.js";
 
 /** 「不保留」常用项。与 caption.py 的 SHEET_TAGS 中文值保持一致，
  *  这样反推自动勾选加进来的和手动点的会去重，不会出现两条一样的。 */
@@ -377,6 +378,8 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
             !confirm("有未保存的改动，确定关闭并丢弃吗？")) return;
         teardown.forEach((f) => f());
         mask.remove();
+        // 关掉编辑器 = 反推和音色都用完了，12GB 该还回去
+        releaseAuxModels();
     }
     const onKey = (e) => { if (e.key === "Escape") close(); };
     window.addEventListener("keydown", onKey);

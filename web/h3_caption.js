@@ -56,6 +56,22 @@ export async function translateLines(lines) {
     return map;
 }
 
+/**
+ * 请后端把反推/音色模型放掉。
+ *
+ * 这两个加起来 12GB，用完不放着等 120 秒空闲计时器，中间那段窗口
+ * 白占显存；而且不该指望 ComfyUI 一定会来抢（H3 那次就是内存先被撑爆）。
+ * 用完即走，下次要用再装 6 秒。
+ */
+export async function releaseAuxModels() {
+    try {
+        const r = await fetch("/minimax_h3_studio/release", { method: "POST" });
+        return r.ok ? await r.json() : null;
+    } catch {
+        return null;      // 释放失败不该影响任何主流程
+    }
+}
+
 async function runCaption(body) {
     const r = await fetch(API, {
         method: "POST",

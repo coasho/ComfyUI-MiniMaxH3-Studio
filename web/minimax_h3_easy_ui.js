@@ -1174,6 +1174,51 @@ function syncPromptFromScript(node) {
     if (node.__h3Editor) renderEditorFromNode(node, true);
 }
 
+/**
+ * 音色工作台选好一条后：在图里建一个 LoadAudio 指向它，登记成一条 media，
+ * 返回新的 mediaKey。这样用户不用手工连线，图上也看得见这条音色从哪来。
+ */
+function attachGeneratedVoice(node, entry) {
+    const file = entry?.file;
+    if (!file) return "";
+    const links = ensureLinks(node);
+
+    const label = entry.name ? `${entry.name}（生成音色）` : file;
+
+    // 同一个文件已经接过就直接复用，别每次都堆一个新节点
+    for (const link of links) {
+        if (String(link.media_type) !== "audio") continue;
+        const src = app.graph?.getNodeById?.(link.source_id);
+        const w = src?.widgets?.find?.((x) => x?.name === "audio");
+        if (w && String(w.value) === file) {
+            return { key: `${link.source_id}:${link.source_slot || 0}`, label, kind: "audio" };
+        }
+    }
+
+    const loader = LiteGraph.createNode("LoadAudio");
+    if (!loader) {
+        alert("建不出 LoadAudio 节点，音色已保存到 input 目录，请手动加载。");
+        return null;
+    }
+    app.graph.add(loader);
+    loader.title = `音色：${entry.name || file}`;
+    // 文件是刚写进 input/ 的，下拉框的选项列表是节点定义时快照的，得手动补进去
+    const w = loader.widgets?.find?.((x) => x?.name === "audio");
+    if (w) {
+        if (Array.isArray(w.options?.values) && !w.options.values.includes(file)) {
+            w.options.values = [...w.options.values, file].sort();
+        }
+        w.value = file;
+    }
+    loader.pos = [node.pos[0] - 340, node.pos[1] + 40 + links.length * 90];
+    loader.setDirtyCanvas?.(true, true);
+
+    links.push({ source_id: loader.id, source_slot: 0, media_type: "audio" });
+    normalizeLinks(node, false);
+    node.setDirtyCanvas?.(true, true);
+    return { key: `${loader.id}:0`, label, kind: "audio" };
+}
+
 function installScriptEditorButton(node) {
     if (node.__h3ScriptBtn) return;
     node.__h3ScriptBtn = true;
@@ -1199,7 +1244,7 @@ function installScriptEditorButton(node) {
             // 剧本是唯一真相源，prompt 框是它的只读派生视图。
             syncPromptFromScript(node);
             return true;
-        });
+        }, (entry) => attachGeneratedVoice(node, entry));
     });
     w.serialize = false;
 }

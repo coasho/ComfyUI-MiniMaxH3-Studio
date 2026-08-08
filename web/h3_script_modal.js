@@ -21,6 +21,7 @@ import {
 } from "./h3_script_editor.js";
 import { framingWarning } from "./h3_grammar.js";
 import { openCaptionDialog } from "./h3_caption.js";
+import { openVoiceStudio } from "./h3_voice.js";
 
 const CSS = `
 .h3m-mask{position:fixed;inset:0;background:rgba(8,9,12,.72);z-index:10000;display:flex;
@@ -222,7 +223,11 @@ function combo(presets, value, onChange) {
  *   true   —— 保存成功，关闭
  *   string —— 保存没生效，弹窗留着并在顶部显示这句话
  */
-export function openScriptModal(node, mediaList, onSave) {
+/**
+ * @param onVoicePicked(entry) 可选。生成好的音色落盘后调它，由调用方在图里建
+ *   LoadAudio 节点并接进 media 口，返回新的 mediaKey；返回空则只落盘不绑定。
+ */
+export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     ensureStyle();
     const S = migrateScript(node.properties?.[SCRIPT_PROP]);
     let sel = S.shots.length ? 0 : "cast";
@@ -325,6 +330,16 @@ export function openScriptModal(node, mediaList, onSave) {
         ...S.entities.map((e, i) => ({ id: e.id, label: `${kindOf(e).icon} ${entName(e, i)}` })),
     ];
     const kindOf = (e) => ENTITY_KINDS.find((k) => k.id === e.kind) || ENTITY_KINDS[0];
+
+    /** 某实体在剧本里的第一句台词，用作音色试听文本 */
+    function firstLineOf(entityId) {
+        for (const sh of S.shots) {
+            for (const ln of sh.lines) {
+                if (ln.entityId === entityId && ln.text?.trim()) return ln.text.trim();
+            }
+        }
+        return "";
+    }
 
     function shotProblems(i) {
         const sh = S.shots[i];
@@ -653,6 +668,31 @@ export function openScriptModal(node, mediaList, onSave) {
                 foot.append(dd([{ id: "", label: auds.length ? "（不指定）" : "没有音频接到 media 口" },
                                 ...auds.map((m) => ({ id: m.key, label: m.label }))],
                                e.voiceKey || "", (v) => { e.voiceKey = v; draw(); }));
+                const mk = E("button", "h3m-btn sm", "🎙 做音色");
+                mk.title = "一次生成多条候选并排试听，挑中的自动接进 media 口";
+                mk.onclick = () => openVoiceStudio({
+                    entityName: e.name?.trim() || `实体 ${i + 1}`,
+                    // 试听文本用这个实体的第一句真实台词，听到的就是成片里会说的那句
+                    auditionText: firstLineOf(e.id),
+                    language: e.language?.trim() || S.language,
+                    onPick: (entry) => {
+                        // 回调在图里新建 LoadAudio 并返回它的 mediaKey。mediaList 是
+                        // 开窗时的快照，不把新素材补进去，下拉框就找不到这个 key，
+                        // voiceKey 写进了数据但界面显示为空。
+                        const added = onVoicePicked?.(entry);
+                        const key = typeof added === "string" ? added : added?.key;
+                        if (!key) return;
+                        if (!mediaList.some((m) => m.key === key)) {
+                            mediaList.push({
+                                key, kind: "audio", previewUrl: "",
+                                label: added?.label || entry.name || entry.file,
+                            });
+                        }
+                        e.voiceKey = key;
+                        draw();
+                    },
+                });
+                foot.append(mk);
             }
             const said = S.shots.reduce((n2, sh) => n2 + sh.lines.filter((l) => l.entityId === e.id && l.text?.trim()).length, 0);
             const spx = E("div"); spx.style.flex = "1"; foot.append(spx);

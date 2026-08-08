@@ -693,13 +693,17 @@ class MiniMaxH3Easy:
     def generate(cls, h3_bundle, mode, prompt, resolution, aspect_ratio, width, height, seconds, advanced, fps, keyframe_role, ref_image_size, reference_mention_mode, **kwargs):
         if not isinstance(h3_bundle, MiniMaxH3Bundle):
             raise ValueError("Connect a MiniMax H3 Easy Loader bundle")
-        # 反推用的 VLM 有 8GB，跟 H3 抢显存必爆。真要生成了就先把它请出去。
-        try:
-            from . import caption
-            if caption.unload_caption_models():
-                print("[MiniMaxH3-Studio] 已卸载图生文反推模型，让出显存给 H3")
-        except Exception:
-            pass
+        # 反推的 VLM 有 8GB、音色模型有 4GB，跟 H3 抢显存必爆。
+        # 真要生成了就先把它们请出去。
+        for _mod_name, _label in (("caption", "图生文反推"), ("voice", "音色")):
+            try:
+                _m = __import__(f"{__package__}.{_mod_name}", fromlist=[_mod_name])
+                _unload = getattr(_m, "unload_caption_models", None) \
+                    or getattr(_m, "unload_voice_models", None)
+                if _unload and _unload():
+                    print(f"[MiniMaxH3-Studio] 已卸载{_label}模型，让出显存给 H3")
+            except Exception:
+                pass
         mode = str(mode)
         keyframe_role = KEYFRAME_LAST if str(keyframe_role) == KEYFRAME_LAST else KEYFRAME_FIRST
         width, height = _canvas_dimensions(resolution, aspect_ratio, width, height)

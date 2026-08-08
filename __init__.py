@@ -14,13 +14,14 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 
 WEB_DIRECTORY = "./web"
 
-# 图生文反推的 HTTP 端点。装不上也不该拖垮整个节点包，所以单独兜住。
-try:
-    from . import caption
-    caption.register_routes()
-except Exception:  # pragma: no cover
-    import traceback
-    print("[MiniMaxH3-Studio] 图生文反推路由注册失败，节点本身不受影响：")
-    traceback.print_exc()
+# 图生文反推 / 音色生成的 HTTP 端点。装不上也不该拖垮整个节点包，各自兜住。
+for _name in ("caption", "voice"):
+    try:
+        _mod = __import__(f"{__name__}.{_name}", fromlist=[_name])
+        _mod.register_routes()
+    except Exception:  # pragma: no cover
+        import traceback
+        print(f"[MiniMaxH3-Studio] {_name} 路由注册失败，节点本身不受影响：")
+        traceback.print_exc()
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

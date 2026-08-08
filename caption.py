@@ -870,10 +870,40 @@ def translate_lines(lines: list[str], backend: str = "auto") -> list[str]:
         if len(_PROTECT.findall(out)) < len(stores[n]) or "[[" in out:
             items[idx] = src
             continue
+        # 整批翻译时模型偶尔漏字，把中文夹在英文里发出去（实测出现过
+        # "weak and无力"）。这种半成品比整句没译更糟，单独重翻一次。
+        if _residual_cjk(out):
+            out = _retranslate_one(src, out, backend, s)
         # 翻完才补排除项：此时一定是英文，\b 词边界让插入位置确定
         out, _ = add_colour_exclusions(out)
         items[idx] = out
     return items
+
+
+def _residual_cjk(text: str) -> bool:
+    """扣掉 @实体名 和标记之后还剩中文，就是漏翻了。"""
+    stripped = _PROTECT.sub("", text)
+    return bool(re.search(r"[一-鿿]", stripped))
+
+
+def _retranslate_one(src: str, first_try: str, backend: str, s: dict) -> str:
+    """单句重翻。还是漏就退回上一版——半成品也好过整句中文。"""
+    masked, store = _mask(src.strip())
+    prompt = (TRANSLATE_SYS +
+              "\nThe previous attempt left Chinese characters in the output, "
+              "which is not acceptable. Translate this single line completely "
+              "into English. Output only the translation, no numbering.\n\n" +
+              masked)
+    try:
+        raw = (openai_describe_text(prompt, s) if backend == "openai"
+               else qwen_text(prompt))
+    except Exception:
+        traceback.print_exc()
+        return first_try
+    out = _unmask(raw.strip().splitlines()[0] if raw.strip() else "", store)
+    if not out or "[[" in out or len(_PROTECT.findall(out)) < len(store):
+        return first_try
+    return out if not _residual_cjk(out) else first_try
 
 
 def qwen_text(prompt: str) -> str:

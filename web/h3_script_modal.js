@@ -47,6 +47,14 @@ const CSS = `
   border-bottom:1px solid var(--line);flex:0 0 auto}
 .h3m-hd h2{margin:0;font-size:15px;font-weight:600;letter-spacing:.3px}
 .h3m-main{flex:1;display:flex;min-height:0}
+/* 时间轴是横向的东西，塞进 258px 窄栏根本看不清刻度。提到顶上占满宽度。 */
+.h3m-tlbar{flex:0 0 auto;padding:10px 18px 6px;background:var(--bg2);
+  border-bottom:1px solid var(--line)}
+.h3m-tlbar .h3m-tl{height:40px}
+/* 导航分组：设定（整片）与分镜（时间线）不是同一层东西 */
+.h3m-grp{font-size:10.5px;color:var(--dim);letter-spacing:.6px;padding:10px 10px 4px;
+  text-transform:uppercase}
+.h3m-grp:first-child{padding-top:2px}
 .h3m-rail{width:258px;flex:0 0 auto;border-right:1px solid var(--line);background:var(--bg2);
   display:flex;flex-direction:column;min-height:0}
 .h3m-rail-top{padding:12px 12px 8px;flex:0 0 auto}
@@ -108,6 +116,18 @@ const CSS = `
 .h3m-issue .go{margin-left:auto;color:var(--accent);font-size:11px;white-space:nowrap;flex:0 0 auto}
 .h3m-stat{cursor:pointer;user-select:none;border-radius:6px;padding:2px 8px}
 .h3m-stat:hover{background:var(--bg3)}
+
+/* @ 自动补全：打 @ 直接出候选，上下键选、回车/Tab 确认 */
+.h3m-ac{position:fixed;z-index:10050;background:var(--bg2);border:1px solid var(--accent);
+  border-radius:9px;box-shadow:0 10px 30px rgba(0,0,0,.55);padding:4px;min-width:210px;
+  max-height:240px;overflow:auto}
+.h3m-ac-item{display:flex;gap:8px;align-items:center;padding:6px 9px;border-radius:6px;
+  font-size:12.5px;cursor:pointer;white-space:nowrap}
+.h3m-ac-item.on{background:#25406e}
+.h3m-ac-item .k{flex:0 0 auto}
+.h3m-ac-item .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
+.h3m-ac-item .id{font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--dim)}
+.h3m-ac-empty{padding:7px 10px;font-size:12px;color:var(--dim)}
 
 .h3m-tl{position:relative;height:34px;border-radius:6px;border:1px solid var(--line);
   overflow:hidden;margin:5px 0 4px;user-select:none;background:#191b21}
@@ -360,9 +380,10 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     const notify = (msg) => { bannerTxt.textContent = msg; banner.style.display = "flex"; };
 
     /* ------------------------------------------------------------ 主体 */
+    const tlBar = E("div", "h3m-tlbar");
     const main = E("div", "h3m-main");
     const rail = E("div", "h3m-rail");
-    const railTop = E("div", "h3m-rail-top");
+    const railTop = tlBar;
     const railList = E("div", "h3m-rail-list");
     const railFt = E("div", "h3m-rail-ft");
     const addBtn = E("button", "h3m-btn full", "+ 在末尾新增分镜");
@@ -378,7 +399,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         draw();
     };
     railFt.append(addBtn);
-    rail.append(railTop, railList, railFt);
+    rail.append(railList, railFt);
     const pane = E("div", "h3m-pane");
     main.append(rail, pane);
 
@@ -431,7 +452,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     };
     ft.append(stat, sp1, cancel, ok);
 
-    box.append(hd, banner, main, ft);
+    box.append(hd, banner, tlBar, main, ft);
     mask.append(box);
     document.body.append(mask);
 
@@ -524,7 +545,9 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         const pct = (t) => (t / S.duration) * 100;
         const segs = [], grips = [];
         S.shots.forEach((sh, i) => {
-            const d = E("div", "h3m-seg" + (sel === i ? " on" : ""), String(i + 1));
+            const dur = shotEnd(i) - sh.cutAt;
+            const label = `${i + 1}　${(sh.description || "").trim().slice(0, 10) || "未填描述"}　${dur.toFixed(1)}s`;
+            const d = E("div", "h3m-seg" + (sel === i ? " on" : ""), label);
             d.style.background = shotProblems(i).length ? "#5c3030" : (i % 2 ? "#333b4a" : "#3c4557");
             d.onclick = () => { sel = i; draw(); };
             segs.push(d); tl.append(d);
@@ -595,7 +618,9 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
 
     function buildRuler() {
         const r = E("div", "h3m-ruler");
-        const step = S.duration <= 8 ? 1 : S.duration <= 16 ? 2 : 5;
+        // 宽度够就每秒一格，不够再放稀。原来按时长硬编码，窄栏里挤成一团
+        const w = railTop.clientWidth || 900;
+        const step = w / S.duration >= 46 ? 1 : w / S.duration >= 24 ? 2 : 5;
         for (let t = 0; t <= S.duration + 1e-6; t += step) {
             const s = E("span", null, `${t}s`);
             s.style.left = (t / S.duration) * 100 + "%";
@@ -655,13 +680,18 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
     /** 左栏（时间轴 + 导航）。全是不可聚焦的元素，重建不会抢焦点 */
     function drawRail() {
         railTop.innerHTML = "";
-        railTop.append(E("div", "h3m-lab", "时间轴"));
+        const tlHd = E("div", "h3m-row");
+        tlHd.append(E("span", "h3m-lab", "时间轴"));
+        tlHd.append(E("span", "h3m-mini", `全片 ${S.duration}s ／ ${S.shots.length} 镜`));
+        railTop.append(tlHd);
         if (S.shots.length) {
             railTop.append(buildTimeline(), buildRuler());
-            railTop.append(E("div", "h3m-mini", "拖分界线改长度，点色块切到那一镜"));
+            railTop.append(E("div", "h3m-mini",
+                "拖分界线改长度　·　点色块切到那一镜　·　插入与排序在左侧列表"));
         } else railTop.append(E("div", "h3m-mini", "尚无分镜"));
 
         railList.innerHTML = "";
+        railList.append(E("div", "h3m-grp", "整片设定"));
         const plan = castPlan(S);
         const speaking = Object.values(plan).filter((p) => p.speaker).length;
         const cast = E("div", "h3m-nav" + (sel === "cast" ? " on" : ""));
@@ -703,6 +733,7 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         };
 
         let dragFrom = null;
+        railList.append(E("div", "h3m-grp", `分镜　${S.shots.length} 个`));
         S.shots.forEach((sh, i) => {
             railList.append(slot(i));
             const n = E("div", "h3m-nav" + (sel === i ? " on" : ""));
@@ -1167,6 +1198,98 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
         pane.append(f2);
     }
 
+    /**
+     * 给文本框装上 @ 自动补全。
+     *
+     * 原来打了 @ 之后要么把实体名一个字一个字敲全，要么把手从键盘挪到鼠标
+     * 去点下面那排芯片——写作流被打断两次。现在打 @ 直接出候选，
+     * 上下键选、回车/Tab 确认、Esc 关掉，手不离键盘。
+     */
+    function attachRefAutocomplete(ta, onChange) {
+        let pop = null, items = [], idx = 0, tokenStart = -1;
+
+        const closePop = () => { pop?.remove(); pop = null; items = []; tokenStart = -1; };
+        teardown.push(closePop);
+
+        /** 光标前最近的 @ 及其后已输入的片段；不在 @ 上下文里返回 null */
+        const context = () => {
+            const pos = ta.selectionStart ?? 0;
+            const left = ta.value.slice(0, pos);
+            const at = left.lastIndexOf("@");
+            if (at < 0) return null;
+            const frag = left.slice(at + 1);
+            // @ 后出现空白或标点就不再算同一个引用
+            if (/[\s，。！？、；：""'（）()<>@]/.test(frag)) return null;
+            return { at, frag };
+        };
+
+        const place = () => {
+            if (!pop) return;
+            const r = ta.getBoundingClientRect();
+            pop.style.left = `${Math.min(r.left + 10, window.innerWidth - 240)}px`;
+            const below = r.bottom + 4;
+            pop.style.top = below + 240 > window.innerHeight
+                ? `${Math.max(8, r.top - 244)}px` : `${below}px`;
+        };
+
+        const render = () => {
+            if (!pop) return;
+            pop.innerHTML = "";
+            if (!items.length) {
+                pop.append(E("div", "h3m-ac-empty", "没有匹配的实体"));
+                return;
+            }
+            const plan = castPlan(S);
+            items.forEach((e, k) => {
+                const row = E("div", "h3m-ac-item" + (k === idx ? " on" : ""));
+                row.append(E("span", "k", kindOf(e).icon));
+                row.append(E("span", "nm", e.name.trim()));
+                row.append(E("span", "id", castBadge(plan[e.id])));
+                row.onmousedown = (ev) => { ev.preventDefault(); accept(k); };
+                pop.append(row);
+            });
+            pop.querySelector(".on")?.scrollIntoView({ block: "nearest" });
+        };
+
+        const refresh = () => {
+            const ctx = context();
+            if (!ctx) { closePop(); return; }
+            const q = ctx.frag.toLowerCase();
+            items = S.entities.filter((e) => e.name?.trim())
+                .filter((e) => !q || e.name.trim().toLowerCase().includes(q));
+            tokenStart = ctx.at;
+            idx = 0;
+            if (!pop) { pop = E("div", "h3m-ac"); document.body.append(pop); }
+            render();
+            place();
+        };
+
+        const accept = (k) => {
+            const e = items[k];
+            if (!e || tokenStart < 0) { closePop(); return; }
+            const pos = ta.selectionStart ?? 0;
+            const name = e.name.trim();
+            ta.value = ta.value.slice(0, tokenStart) + "@" + name + ta.value.slice(pos);
+            const caret = tokenStart + 1 + name.length;
+            ta.setSelectionRange(caret, caret);
+            onChange(ta.value);
+            closePop();
+            ta.focus();
+        };
+
+        ta.addEventListener("keydown", (ev) => {
+            if (!pop || !items.length) return;
+            if (ev.key === "ArrowDown") { ev.preventDefault(); idx = (idx + 1) % items.length; render(); }
+            else if (ev.key === "ArrowUp") { ev.preventDefault(); idx = (idx - 1 + items.length) % items.length; render(); }
+            else if (ev.key === "Enter" || ev.key === "Tab") { ev.preventDefault(); accept(idx); }
+            else if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closePop(); }
+        });
+        ta.addEventListener("input", refresh);
+        ta.addEventListener("click", refresh);
+        ta.addEventListener("blur", () => setTimeout(closePop, 120));
+        ta.addEventListener("scroll", place);
+    }
+
     /* ------------------------------------------- @ 引用输入框 + 实时解析 */
     function refField(getText, setText, placeholder, minHeight) {
         const wrap = E("div");
@@ -1184,11 +1307,14 @@ export function openScriptModal(node, mediaList, onSave, onVoicePicked) {
                 : "（这里会实时显示 @ 引用解析成 <Subject N> 之后的样子）";
         };
         ta.addEventListener("input", () => { setText(ta.value); sync(); softRefresh(); });
+        attachRefAutocomplete(ta, (v) => { setText(v); sync(); softRefresh(); });
         wrap.append(ta);
 
+        // 主入口是打 @ 弹候选（手不离键盘）。芯片降级成备用，
+        // 免得看起来像「必须用鼠标点」。
         if (S.entities.length) {
             const refs = E("div", "h3m-refs");
-            refs.append(E("span", "h3m-mini", "插入引用："));
+            refs.append(E("span", "h3m-mini", "打 @ 出候选，↑↓ 选，回车确认　｜　也可点这里插入："));
             S.entities.forEach((e, i) => {
                 const chip = E("span", "h3m-ref", `@${entName(e, i)}`);
                 chip.title = `${kindOf(e).label} · ${castBadge(castPlan(S)[e.id])}`;

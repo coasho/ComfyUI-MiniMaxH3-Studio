@@ -1,63 +1,86 @@
 /**
- * 剧本编辑弹窗：分镜卡 + 台词子卡 + 卡上媒体选择 + 实时校验。
- * 使用者只填内容；H3 语法在生成时由 assemble() 补全。
+ * 剧本编辑弹窗（左右分栏）。
+ *
+ * 左栏 = 导航：全局设置入口、时间轴、分镜列表（带问题角标）
+ * 右栏 = 当前选中项的编辑区
+ *
+ * 使用者只填内容；六段式、时间码、<d> 标签、<Picture N> 编号在生成时由 assemble() 补全。
  */
 
 import {
     assemble, validate, blankScript, blankShot, blankLine, SCRIPT_PROP,
     SECTIONS, MEDIA_ROLES, CAMERA_MOTIONS, CAMERA_AMPLITUDE, CAMERA_SPEED,
-    SHOT_SIZES, TRANSITIONS, VOICE_MODES, DELIVERY_PRESETS, LANGUAGES, ts,
+    SHOT_SIZES, TRANSITIONS, VOICE_MODES, DELIVERY_PRESETS, LANGUAGES,
 } from "./h3_script_editor.js";
-import { spokenChars, speechSeconds, SPEECH } from "./h3_grammar.js";
+import { spokenChars, speechSeconds, SPEECH, framingWarning } from "./h3_grammar.js";
 
 const CSS = `
-.h3sm-mask{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:10000;display:flex;
-  align-items:center;justify-content:center;backdrop-filter:blur(2px)}
-.h3sm{background:#23252b;color:#e6e6e6;width:min(1180px,94vw);height:min(860px,92vh);
-  border-radius:12px;display:flex;flex-direction:column;box-shadow:0 18px 60px rgba(0,0,0,.55);
-  font:13px/1.55 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
-.h3sm-hd{display:flex;align-items:center;gap:14px;padding:12px 16px;background:#1b1d22;
-  border-bottom:1px solid #34373f;flex:0 0 auto}
-.h3sm-hd h2{margin:0;font-size:15px;font-weight:600}
-.h3sm-hd .sp{flex:1}
-.h3sm-body{flex:1;overflow:auto;padding:14px 16px 20px}
-.h3sm-ft{flex:0 0 auto;border-top:1px solid #34373f;background:#1b1d22;padding:10px 16px;
-  display:flex;gap:10px;align-items:center}
-.h3sm-btn{background:#3a3f4b;border:1px solid #4a5060;color:#e6e6e6;border-radius:6px;
-  padding:6px 13px;cursor:pointer;font-size:13px}
-.h3sm-btn:hover{background:#464d5c}
-.h3sm-btn.pri{background:#2f6feb;border-color:#3b7ff5}
-.h3sm-btn.pri:hover{background:#3b7ff5}
-.h3sm-btn.dim{background:transparent;border-color:#4a5060;color:#9aa0ab}
-.h3sm-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-.h3sm-lab{color:#9aa0ab;font-size:12px;min-width:56px}
-.h3sm input,.h3sm select,.h3sm textarea{background:#2c2f37;border:1px solid #414652;
-  color:#e6e6e6;border-radius:5px;padding:5px 8px;font:inherit;outline:none}
-.h3sm input:focus,.h3sm select:focus,.h3sm textarea:focus{border-color:#3b7ff5}
-.h3sm textarea{width:100%;resize:vertical;min-height:52px;line-height:1.6}
-.h3sm-sec{border:1px solid #34373f;border-radius:9px;padding:11px 13px;margin-bottom:12px;background:#26282f}
-.h3sm-sec>h3{margin:0 0 4px;font-size:13px;font-weight:600;color:#cfd3da}
-.h3sm-hint{color:#7f8794;font-size:11.5px;margin-bottom:7px;line-height:1.5}
-.h3sm-shot{border:1px solid #3a3f4b;border-left:3px solid #3b7ff5;border-radius:9px;
-  padding:11px 13px;margin-bottom:11px;background:#282b33}
-.h3sm-shot.bad{border-left-color:#e05a5a}
-.h3sm-shot-hd{display:flex;align-items:center;gap:9px;margin-bottom:9px;flex-wrap:wrap}
-.h3sm-no{background:#3b7ff5;color:#fff;border-radius:5px;padding:1px 8px;font-weight:600;font-size:12px}
-.h3sm-line{border:1px solid #414652;border-radius:7px;padding:9px 10px;margin:7px 0 0;background:#2e313a}
-.h3sm-line-hd{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
-.h3sm-chip{display:inline-flex;align-items:center;gap:5px;background:#333845;border:1px solid #454b5a;
-  border-radius:20px;padding:2px 9px 2px 3px;font-size:11.5px;cursor:pointer;user-select:none}
-.h3sm-chip.on{background:#26406e;border-color:#3b7ff5}
-.h3sm-chip img{width:22px;height:22px;border-radius:50%;object-fit:cover}
-.h3sm-chip .ic{width:22px;height:22px;border-radius:50%;background:#454b5a;display:grid;
-  place-items:center;font-size:11px}
-.h3sm-warn{background:#3a2626;border:1px solid #6b3636;color:#ffb4b4;border-radius:7px;
-  padding:8px 11px;margin:9px 0;font-size:12px;line-height:1.6}
-.h3sm-ok{background:#22321f;border:1px solid #3d5c35;color:#a9d69a}
-.h3sm-tl{display:flex;height:26px;border-radius:5px;overflow:hidden;margin:6px 0 12px;border:1px solid #414652}
-.h3sm-tl div{display:grid;place-items:center;font-size:11px;color:#dfe3ea;border-right:1px solid #23252b;
-  overflow:hidden;white-space:nowrap}
-.h3sm-mini{color:#7f8794;font-size:11px}
+.h3m-mask{position:fixed;inset:0;background:rgba(8,9,12,.72);z-index:10000;display:flex;
+  align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+.h3m{--bg:#1e2027;--bg2:#252831;--bg3:#2d313c;--line:#363b47;--txt:#e8eaee;--dim:#8b93a1;
+  --accent:#4d8dff;--warn:#ff7a7a;--ok:#67c98a;
+  background:var(--bg);color:var(--txt);width:min(1240px,95vw);height:min(880px,93vh);
+  border-radius:14px;display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 24px 70px rgba(0,0,0,.6);border:1px solid var(--line);
+  font:13.5px/1.6 system-ui,"Segoe UI","Microsoft YaHei",sans-serif}
+.h3m *{box-sizing:border-box}
+.h3m-hd{display:flex;align-items:center;gap:16px;padding:13px 18px;background:var(--bg2);
+  border-bottom:1px solid var(--line);flex:0 0 auto}
+.h3m-hd h2{margin:0;font-size:15px;font-weight:600;letter-spacing:.3px}
+.h3m-main{flex:1;display:flex;min-height:0}
+.h3m-rail{width:246px;flex:0 0 auto;border-right:1px solid var(--line);background:var(--bg2);
+  display:flex;flex-direction:column;min-height:0}
+.h3m-rail-top{padding:12px 12px 8px;flex:0 0 auto}
+.h3m-rail-list{flex:1;overflow:auto;padding:0 10px 12px}
+.h3m-rail-ft{flex:0 0 auto;padding:10px 12px;border-top:1px solid var(--line)}
+.h3m-pane{flex:1;overflow:auto;padding:18px 22px 28px;min-width:0}
+.h3m-ft{flex:0 0 auto;border-top:1px solid var(--line);background:var(--bg2);
+  padding:11px 18px;display:flex;gap:12px;align-items:center}
+.h3m-nav{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;
+  cursor:pointer;margin-bottom:4px;border:1px solid transparent;user-select:none}
+.h3m-nav:hover{background:var(--bg3)}
+.h3m-nav.on{background:#25406e;border-color:var(--accent)}
+.h3m-nav .n{background:var(--bg3);border-radius:5px;min-width:22px;text-align:center;
+  font-size:11.5px;padding:1px 5px;color:var(--dim)}
+.h3m-nav.on .n{background:var(--accent);color:#fff}
+.h3m-nav .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
+.h3m-nav .b{color:var(--warn);font-size:12px}
+.h3m-tl{display:flex;height:30px;border-radius:6px;overflow:hidden;border:1px solid var(--line);margin-bottom:10px}
+.h3m-tl>div{display:grid;place-items:center;font-size:10.5px;color:#cfd5e0;cursor:pointer;
+  border-right:1px solid var(--bg);overflow:hidden;white-space:nowrap;transition:filter .12s}
+.h3m-tl>div:hover{filter:brightness(1.35)}
+.h3m-tl>div.on{outline:2px solid var(--accent);outline-offset:-2px}
+.h3m h3{margin:0 0 5px;font-size:13.5px;font-weight:600}
+.h3m-hint{color:var(--dim);font-size:11.5px;line-height:1.55;margin-bottom:9px}
+.h3m-fld{margin-bottom:16px}
+.h3m-row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.h3m-lab{color:var(--dim);font-size:11.5px}
+.h3m input,.h3m select,.h3m textarea{background:var(--bg3);border:1px solid var(--line);
+  color:var(--txt);border-radius:6px;padding:6px 9px;font:inherit;outline:none;max-width:100%}
+.h3m input:focus,.h3m select:focus,.h3m textarea:focus{border-color:var(--accent)}
+.h3m textarea{width:100%;resize:vertical;min-height:76px}
+.h3m-btn{background:var(--bg3);border:1px solid var(--line);color:var(--txt);border-radius:7px;
+  padding:6px 14px;cursor:pointer;font:inherit}
+.h3m-btn:hover{background:#39404e}
+.h3m-btn.pri{background:var(--accent);border-color:#5c99ff}
+.h3m-btn.pri:hover{filter:brightness(1.1)}
+.h3m-btn.gh{background:transparent;color:var(--dim)}
+.h3m-btn.full{width:100%}
+.h3m-line{border:1px solid var(--line);border-radius:9px;padding:11px 12px;margin-bottom:9px;background:var(--bg2)}
+.h3m-line-hd{display:flex;gap:9px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.h3m-chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:22px;padding:3px 11px 3px 3px;font-size:12px;cursor:pointer;user-select:none}
+.h3m-chip:hover{border-color:#4a5262}
+.h3m-chip.on{background:#25406e;border-color:var(--accent)}
+.h3m-chip img{width:24px;height:24px;border-radius:50%;object-fit:cover}
+.h3m-chip .ic{width:24px;height:24px;border-radius:50%;background:#454b5a;display:grid;place-items:center;font-size:12px}
+.h3m-note{border-radius:8px;padding:9px 12px;font-size:12px;line-height:1.65;margin-bottom:12px}
+.h3m-note.warn{background:#3a2424;border:1px solid #6e3636;color:#ffb8b8}
+.h3m-note.ok{background:#1f3226;border:1px solid #35603f;color:#a5dcb6}
+.h3m-mini{color:var(--dim);font-size:11.5px}
+.h3m-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:9px}
+.h3m-grid label{display:flex;flex-direction:column;gap:4px}
+.h3m-grid label>span{color:var(--dim);font-size:11.5px}
 `;
 
 let styled = false;
@@ -76,7 +99,7 @@ const E = (tag, cls, txt) => {
     return el;
 };
 
-function dropdown(opts, value, onChange, width) {
+function dd(opts, value, onChange) {
     const s = E("select");
     for (const o of opts) {
         const op = E("option");
@@ -85,24 +108,26 @@ function dropdown(opts, value, onChange, width) {
         s.append(op);
     }
     s.value = value ?? "";
-    if (width) s.style.width = width;
     s.addEventListener("change", () => onChange(s.value));
     return s;
 }
 
-/** 可编辑下拉：能选预设也能自己写 */
-function comboBox(presets, value, onChange, width = "230px") {
+function labeled(text, el) {
+    const l = E("label");
+    l.append(E("span", null, text), el);
+    return l;
+}
+
+/** 可编辑下拉：选预设或自己写 */
+function combo(presets, value, onChange) {
     const wrap = E("span");
-    wrap.style.display = "inline-flex";
+    wrap.style.cssText = "display:inline-flex;flex:1;min-width:200px";
     const inp = E("input");
     inp.value = value || "";
-    inp.style.width = width;
-    inp.style.borderTopRightRadius = inp.style.borderBottomRightRadius = "0";
+    inp.style.cssText = "flex:1;border-top-right-radius:0;border-bottom-right-radius:0";
     inp.addEventListener("input", () => onChange(inp.value));
     const sel = E("select");
-    sel.style.width = "26px";
-    sel.style.borderTopLeftRadius = sel.style.borderBottomLeftRadius = "0";
-    sel.style.borderLeft = "none";
+    sel.style.cssText = "width:30px;border-top-left-radius:0;border-bottom-left-radius:0;border-left:none";
     sel.append(E("option"));
     for (const p of presets) {
         const o = E("option");
@@ -117,291 +142,336 @@ function comboBox(presets, value, onChange, width = "230px") {
     return wrap;
 }
 
-/**
- * @param {object} node       MiniMaxH3Easy 节点
- * @param {Array}  mediaList  [{key,label,kind,previewUrl}]  已连接的素材
- */
 export function openScriptModal(node, mediaList, onSave) {
     ensureStyle();
-    const script = structuredClone(node.properties?.[SCRIPT_PROP] || blankScript());
-    script.shots ||= [];
-    script.media ||= {};
-    script.sections ||= {};
-    script.notRetained ||= [];
+    const S = structuredClone(node.properties?.[SCRIPT_PROP] || blankScript());
+    S.shots ||= []; S.media ||= {}; S.sections ||= {}; S.notRetained ||= [];
+    let sel = S.shots.length ? 0 : "global";     // 当前选中：'global' 或分镜下标
 
-    const mask = E("div", "h3sm-mask");
-    const box = E("div", "h3sm");
-    const hd = E("div", "h3sm-hd");
+    const mask = E("div", "h3m-mask");
+    const box = E("div", "h3m");
+
+    /* -------------------------------------------------------------- 顶栏 */
+    const hd = E("div", "h3m-hd");
     hd.append(E("h2", null, "剧本编辑器"));
+    const dur = E("input");
+    dur.type = "number"; dur.step = "0.5"; dur.min = "4"; dur.max = "20";
+    dur.value = S.duration; dur.style.width = "74px";
+    dur.addEventListener("input", () => { S.duration = parseFloat(dur.value) || 15; draw(); });
+    hd.append(E("span", "h3m-lab", "总时长"), dur, E("span", "h3m-mini", "秒"));
+    const spk = E("input");
+    spk.value = S.speaker || ""; spk.style.width = "96px"; spk.placeholder = "少女";
+    spk.addEventListener("input", () => { S.speaker = spk.value; });
+    hd.append(E("span", "h3m-lab", "说话人"), spk);
+    hd.append(E("span", "h3m-lab", "语言"), dd(LANGUAGES, S.language || "Chinese", (v) => { S.language = v; }));
+    const sp0 = E("div"); sp0.style.flex = "1"; hd.append(sp0);
+    const x = E("button", "h3m-btn gh", "✕");
+    x.onclick = () => mask.remove();
+    hd.append(x);
 
-    const dur = E("input"); dur.type = "number"; dur.step = "0.5"; dur.min = "4"; dur.max = "20";
-    dur.value = script.duration; dur.style.width = "68px";
-    dur.addEventListener("input", () => { script.duration = parseFloat(dur.value) || 15; refresh(); });
-    hd.append(E("span", "h3sm-lab", "总时长"), dur, E("span", "h3sm-mini", "秒"));
-
-    const spk = E("input"); spk.value = script.speaker || ""; spk.style.width = "90px";
-    spk.placeholder = "说话人";
-    spk.addEventListener("input", () => { script.speaker = spk.value; });
-    hd.append(E("span", "h3sm-lab", "说话人"), spk);
-    hd.append(E("span", "h3sm-lab", "语言"),
-        dropdown(LANGUAGES, script.language || "Chinese", (v) => { script.language = v; }, "110px"));
-    hd.append(E("div", "sp"));
-    const close = E("button", "h3sm-btn dim", "✕");
-    close.onclick = () => mask.remove();
-    hd.append(close);
-
-    const body = E("div", "h3sm-body");
-    const ft = E("div", "h3sm-ft");
-    const status = E("div", "h3sm-mini");
-    const addShot = E("button", "h3sm-btn", "+ 新增分镜");
-    addShot.onclick = () => {
-        const last = script.shots.at(-1);
-        const t = last ? Math.min(script.duration - 0.5, last.cutAt + 3) : 0;
-        script.shots.push(blankShot(script.shots.length ? +t.toFixed(2) : 0));
-        refresh();
+    /* ------------------------------------------------------------ 主体 */
+    const main = E("div", "h3m-main");
+    const rail = E("div", "h3m-rail");
+    const railTop = E("div", "h3m-rail-top");
+    const railList = E("div", "h3m-rail-list");
+    const railFt = E("div", "h3m-rail-ft");
+    const addBtn = E("button", "h3m-btn full", "+ 新增分镜");
+    addBtn.onclick = () => {
+        const last = S.shots.at(-1);
+        const t = last ? Math.min(S.duration - 0.5, last.cutAt + 3) : 0;
+        S.shots.push(blankShot(S.shots.length ? +t.toFixed(2) : 0));
+        sel = S.shots.length - 1;
+        draw();
     };
-    const save = E("button", "h3sm-btn pri", "保存并应用");
-    save.onclick = () => { onSave(structuredClone(script)); mask.remove(); };
-    ft.append(addShot, E("div", "sp"), status, save);
-    ft.querySelector(".sp").style.flex = "1";
+    railFt.append(addBtn);
+    rail.append(railTop, railList, railFt);
+    const pane = E("div", "h3m-pane");
+    main.append(rail, pane);
 
-    box.append(hd, body, ft);
+    /* ------------------------------------------------------------ 底栏 */
+    const ft = E("div", "h3m-ft");
+    const stat = E("div", "h3m-mini");
+    const sp1 = E("div"); sp1.style.flex = "1";
+    const cancel = E("button", "h3m-btn gh", "取消");
+    cancel.onclick = () => mask.remove();
+    const ok = E("button", "h3m-btn pri", "保存并应用");
+    ok.onclick = () => { onSave(structuredClone(S)); mask.remove(); };
+    ft.append(stat, sp1, cancel, ok);
+
+    box.append(hd, main, ft);
     mask.append(box);
     mask.addEventListener("mousedown", (e) => { if (e.target === mask) mask.remove(); });
     document.body.append(mask);
 
-    /* ---------------------------------------------------------- 媒体选择器 */
-    function mediaPicker(selected, onToggle, kinds = ["image", "video"]) {
-        const wrap = E("div");
-        wrap.style.display = "flex";
-        wrap.style.flexWrap = "wrap";
-        wrap.style.gap = "6px";
-        const usable = mediaList.filter((m) => kinds.includes(m.kind));
-        if (!usable.length) {
-            wrap.append(E("span", "h3sm-mini", "（还没有连接素材到节点的 media 口）"));
-            return wrap;
+    /* ------------------------------------------------------- 素材选择器 */
+    function picker(selected, toggle, kinds) {
+        const w = E("div", "h3m-row");
+        const list = mediaList.filter((m) => kinds.includes(m.kind));
+        if (!list.length) {
+            w.append(E("span", "h3m-mini", "还没有素材连到节点的 media 口"));
+            return w;
         }
-        for (const m of usable) {
-            const chip = E("span", "h3sm-chip" + (selected.includes(m.key) ? " on" : ""));
+        for (const m of list) {
+            const c = E("span", "h3m-chip" + (selected.includes(m.key) ? " on" : ""));
             if (m.previewUrl && m.kind === "image") {
-                const img = E("img"); img.src = m.previewUrl; chip.append(img);
-            } else {
-                chip.append(E("span", "ic", m.kind === "audio" ? "♪" : m.kind === "video" ? "▶" : "🖼"));
-            }
-            chip.append(E("span", null, m.label));
-            chip.onclick = () => { onToggle(m.key); refresh(); };
-            wrap.append(chip);
+                const i = E("img"); i.src = m.previewUrl; c.append(i);
+            } else c.append(E("span", "ic", m.kind === "audio" ? "♪" : m.kind === "video" ? "▶" : "🖼"));
+            c.append(E("span", null, m.label));
+            c.onclick = () => { toggle(m.key); draw(); };
+            w.append(c);
         }
-        return wrap;
+        return w;
     }
 
-    /* --------------------------------------------------------------- 渲染 */
-    function refresh() {
-        body.innerHTML = "";
+    const shotEnd = (i) => (i + 1 < S.shots.length ? S.shots[i + 1].cutAt : S.duration);
 
+    function shotProblems(i) {
+        const sh = S.shots[i];
+        const out = [];
+        const span = shotEnd(i) - sh.cutAt;
+        let need = 0;
+        for (const l of sh.lines) if (l.text?.trim()) need += SPEECH.padBefore + speechSeconds(l.text) + SPEECH.padAfter;
+        if (need > span) out.push(`台词需 ${need.toFixed(1)}s，本镜只有 ${span.toFixed(1)}s`);
+        const fw = framingWarning(sh);
+        if (fw) out.push(fw);
+        if (!sh.description?.trim()) out.push("还没有画面描述");
+        return out;
+    }
+
+    /* ----------------------------------------------------------- 绘制 */
+    function draw() {
+        // 左栏：时间轴
+        railTop.innerHTML = "";
+        railTop.append(E("div", "h3m-lab", "时间轴"));
+        if (S.shots.length) {
+            const tl = E("div", "h3m-tl");
+            S.shots.forEach((sh, i) => {
+                const span = Math.max(0.01, shotEnd(i) - sh.cutAt);
+                const d = E("div", sel === i ? "on" : null, `${i + 1}`);
+                d.style.flex = String(span);
+                d.style.background = shotProblems(i).length ? "#5c3030" : (i % 2 ? "#333b4a" : "#3c4557");
+                d.title = `镜头 ${i + 1}：${sh.cutAt.toFixed(1)}–${shotEnd(i).toFixed(1)}s`;
+                d.onclick = () => { sel = i; draw(); };
+                tl.append(d);
+            });
+            railTop.append(tl);
+        } else railTop.append(E("div", "h3m-mini", "尚无分镜"));
+
+        // 左栏：导航
+        railList.innerHTML = "";
+        const g = E("div", "h3m-nav" + (sel === "global" ? " on" : ""));
+        g.append(E("span", "n", "◈"), E("span", "t", "全局设置"));
+        const gp = globalProblems();
+        if (gp.length) g.append(E("span", "b", "●"));
+        g.onclick = () => { sel = "global"; draw(); };
+        railList.append(g);
+        S.shots.forEach((sh, i) => {
+            const n = E("div", "h3m-nav" + (sel === i ? " on" : ""));
+            n.append(E("span", "n", String(i + 1)));
+            const title = (sh.description || "").trim().slice(0, 14) || "（未填描述）";
+            n.append(E("span", "t", `${sh.cutAt.toFixed(1)}s  ${title}`));
+            if (shotProblems(i).length) n.append(E("span", "b", "●"));
+            n.onclick = () => { sel = i; draw(); };
+            railList.append(n);
+        });
+
+        // 右栏
+        pane.innerHTML = "";
+        if (sel === "global") drawGlobal(); else drawShot(S.shots[sel], sel);
+
+        const all = validate(S);
+        stat.textContent = all.length ? `⚠ ${all.length} 个问题` : "✅ 校验通过";
+        stat.style.color = all.length ? "var(--warn)" : "var(--ok)";
+    }
+
+    function globalProblems() {
+        return SECTIONS.filter((s) => s.required && !s.auto && !S.sections[s.key]?.trim());
+    }
+
+    function drawGlobal() {
         // 素材用途
-        const msec = E("div", "h3sm-sec");
-        msec.append(E("h3", null, "素材用途"));
-        msec.append(E("div", "h3sm-hint",
-            "指定每个素材做什么用。生成时会自动编号成 <Picture 1>/<Audio 1>… 并写进保留声明，你不用管编号。"));
-        if (!mediaList.length) {
-            msec.append(E("div", "h3sm-mini", "还没有素材。把 LoadImage / TTS 之类接到节点的 media 口即可。"));
-        }
+        const f0 = E("div", "h3m-fld");
+        f0.append(E("h3", null, "素材用途"));
+        f0.append(E("div", "h3m-hint",
+            "指定每个素材做什么用。生成时自动编号成 <Picture 1>/<Audio 1> 并写进保留声明，编号不用你管。"));
+        if (!mediaList.length) f0.append(E("div", "h3m-mini", "把 LoadImage / TTS 之类接到节点的 media 口即可。"));
         for (const m of mediaList) {
-            const r = E("div", "h3sm-row");
-            const chip = E("span", "h3sm-chip on");
-            if (m.previewUrl && m.kind === "image") {
-                const img = E("img"); img.src = m.previewUrl; chip.append(img);
-            } else chip.append(E("span", "ic", m.kind === "audio" ? "♪" : m.kind === "video" ? "▶" : "🖼"));
-            chip.append(E("span", null, m.label));
-            r.append(chip);
-            const cfg = (script.media[m.key] ||= { kind: m.kind, role: "" });
+            const r = E("div", "h3m-row");
+            r.style.marginBottom = "7px";
+            const c = E("span", "h3m-chip on");
+            if (m.previewUrl && m.kind === "image") { const i = E("img"); i.src = m.previewUrl; c.append(i); }
+            else c.append(E("span", "ic", m.kind === "audio" ? "♪" : m.kind === "video" ? "▶" : "🖼"));
+            c.append(E("span", null, m.label));
+            r.append(c);
+            const cfg = (S.media[m.key] ||= { kind: m.kind, role: "" });
             cfg.kind = m.kind;
-            const roles = MEDIA_ROLES[m.kind] || [];
-            r.append(dropdown([{ id: "", label: "（不使用）" }, ...roles], cfg.role,
-                (v) => { cfg.role = v; refresh(); }, "230px"));
+            r.append(dd([{ id: "", label: "（不使用）" }, ...(MEDIA_ROLES[m.kind] || [])], cfg.role,
+                (v) => { cfg.role = v; draw(); }));
             const note = E("input");
-            note.placeholder = "补充说明（可留空）";
-            note.style.flex = "1"; note.style.minWidth = "180px";
+            note.placeholder = "补充说明（可留空）"; note.style.flex = "1"; note.style.minWidth = "160px";
             note.value = cfg.note || "";
             note.addEventListener("input", () => { cfg.note = note.value; });
             r.append(note);
-            msec.append(r);
+            f0.append(r);
         }
-        body.append(msec);
+        pane.append(f0);
 
         // 文字段落
         for (const s of SECTIONS) {
             if (s.auto) continue;
-            const sec = E("div", "h3sm-sec");
-            sec.append(E("h3", null, s.label + (s.required ? "" : "（可选）")));
-            sec.append(E("div", "h3sm-hint", s.hint));
+            const f = E("div", "h3m-fld");
+            f.append(E("h3", null, s.label + (s.required ? "" : "（可选）")));
+            f.append(E("div", "h3m-hint", s.hint));
             const ta = E("textarea");
-            ta.value = script.sections[s.key] || "";
-            ta.addEventListener("input", () => { script.sections[s.key] = ta.value; runCheck(); });
-            sec.append(ta);
-            body.append(sec);
+            ta.value = S.sections[s.key] || "";
+            ta.addEventListener("input", () => { S.sections[s.key] = ta.value; });
+            ta.addEventListener("change", draw);
+            f.append(ta);
+            pane.append(f);
         }
 
-        // 不保留项
-        const nr = E("div", "h3sm-sec");
-        nr.append(E("h3", null, "不保留的内容"));
-        nr.append(E("div", "h3sm-hint",
-            "用三视图/设定稿当参考时，务必写上白底和 T-pose，否则会被一起搬进画面。"));
-        const nrRow = E("div", "h3sm-row");
-        const nrIn = E("input");
-        nrIn.placeholder = "例如：参考图的白色背景";
-        nrIn.style.flex = "1";
-        const nrAdd = E("button", "h3sm-btn", "+ 添加");
-        nrAdd.onclick = () => { if (nrIn.value.trim()) { script.notRetained.push(nrIn.value.trim()); refresh(); } };
-        nrRow.append(nrIn, nrAdd);
-        nr.append(nrRow);
-        const nrList = E("div", "h3sm-row");
-        script.notRetained.forEach((t, i) => {
-            const c = E("span", "h3sm-chip on");
-            c.append(E("span", null, t + "  ✕"));
-            c.onclick = () => { script.notRetained.splice(i, 1); refresh(); };
-            nrList.append(c);
+        // 不保留
+        const f2 = E("div", "h3m-fld");
+        f2.append(E("h3", null, "不保留的内容"));
+        f2.append(E("div", "h3m-hint",
+            "用三视图/设定稿当参考时务必写上白底和 T-pose，否则会被一起搬进画面。"));
+        const row = E("div", "h3m-row");
+        const inp = E("input");
+        inp.placeholder = "例如：参考图的白色背景"; inp.style.flex = "1";
+        const add = E("button", "h3m-btn", "+ 添加");
+        const doAdd = () => { if (inp.value.trim()) { S.notRetained.push(inp.value.trim()); draw(); } };
+        add.onclick = doAdd;
+        inp.addEventListener("keydown", (e) => { if (e.key === "Enter") doAdd(); });
+        row.append(inp, add);
+        f2.append(row);
+        const chips = E("div", "h3m-row");
+        chips.style.marginTop = "8px";
+        S.notRetained.forEach((t, i) => {
+            const c = E("span", "h3m-chip on");
+            c.append(E("span", null, t + "　✕"));
+            c.onclick = () => { S.notRetained.splice(i, 1); draw(); };
+            chips.append(c);
         });
-        nr.append(nrList);
-        body.append(nr);
-
-        // 时间轴
-        if (script.shots.length) {
-            const tl = E("div", "h3sm-tl");
-            script.shots.forEach((sh, i) => {
-                const end = i + 1 < script.shots.length ? script.shots[i + 1].cutAt : script.duration;
-                const span = Math.max(0.01, end - sh.cutAt);
-                const d = E("div", null, `${i + 1} · ${span.toFixed(1)}s`);
-                d.style.flex = String(span);
-                d.style.background = i % 2 ? "#333947" : "#3b4252";
-                tl.append(d);
-            });
-            body.append(E("div", "h3sm-lab", "时间轴"), tl);
-        }
-
-        // 分镜卡
-        script.shots.forEach((sh, i) => body.append(shotCard(sh, i)));
-        if (!script.shots.length) {
-            body.append(E("div", "h3sm-mini", "还没有分镜。点左下「+ 新增分镜」开始。"));
-        }
-        runCheck();
+        f2.append(chips);
+        pane.append(f2);
     }
 
-    function shotCard(sh, i) {
-        const card = E("div", "h3sm-shot");
-        const hdr = E("div", "h3sm-shot-hd");
-        hdr.append(E("span", "h3sm-no", "镜头 " + (i + 1)));
+    function drawShot(sh, i) {
+        const probs = shotProblems(i);
+        if (probs.length) {
+            const n = E("div", "h3m-note warn");
+            probs.forEach((p) => n.append(E("div", null, "• " + p)));
+            pane.append(n);
+        }
 
-        const t = E("input"); t.type = "number"; t.step = "0.1"; t.min = "0";
-        t.value = sh.cutAt; t.style.width = "72px";
-        t.disabled = i === 0;
-        t.addEventListener("input", () => { sh.cutAt = parseFloat(t.value) || 0; refresh(); });
-        hdr.append(E("span", "h3sm-lab", "起点"), t, E("span", "h3sm-mini", "秒"));
-
-        if (i > 0) hdr.append(dropdown(TRANSITIONS, sh.transition, (v) => { sh.transition = v; }, "96px"));
-        hdr.append(E("span", "h3sm-lab", "景别"),
-            dropdown(SHOT_SIZES, sh.size, (v) => { sh.size = v; refresh(); }, "170px"));
-        hdr.append(E("span", "h3sm-lab", "运镜"),
-            dropdown(CAMERA_MOTIONS, sh.motion, (v) => { sh.motion = v; refresh(); }, "120px"),
-            dropdown(CAMERA_AMPLITUDE, sh.amplitude, (v) => { sh.amplitude = v; }, "96px"),
-            dropdown(CAMERA_SPEED, sh.speed, (v) => { sh.speed = v; }, "96px"));
-
+        const hdr = E("div", "h3m-row");
+        hdr.style.marginBottom = "14px";
+        hdr.append(E("h3", null, `镜头 ${i + 1}`));
         const sp = E("div"); sp.style.flex = "1"; hdr.append(sp);
-        const up = E("button", "h3sm-btn dim", "↑");
-        up.onclick = () => { if (i > 0) { const c = script.shots[i - 1].cutAt; script.shots[i - 1].cutAt = sh.cutAt; sh.cutAt = c; [script.shots[i - 1], script.shots[i]] = [script.shots[i], script.shots[i - 1]]; refresh(); } };
-        const del = E("button", "h3sm-btn dim", "删除");
-        del.onclick = () => { script.shots.splice(i, 1); refresh(); };
+        const span = shotEnd(i) - sh.cutAt;
+        hdr.append(E("span", "h3m-mini", `${sh.cutAt.toFixed(1)} – ${shotEnd(i).toFixed(1)}s，共 ${span.toFixed(1)}s`));
+        const up = E("button", "h3m-btn gh", "↑");
+        up.onclick = () => {
+            if (i === 0) return;
+            const a = S.shots[i - 1];
+            [a.cutAt, sh.cutAt] = [sh.cutAt, a.cutAt];
+            S.shots[i - 1] = sh; S.shots[i] = a;
+            sel = i - 1; draw();
+        };
+        const del = E("button", "h3m-btn gh", "删除本镜");
+        del.onclick = () => { S.shots.splice(i, 1); sel = Math.max(0, i - 1); if (!S.shots.length) sel = "global"; draw(); };
         hdr.append(up, del);
-        card.append(hdr);
+        pane.append(hdr);
 
+        const grid = E("div", "h3m-grid");
+        grid.style.marginBottom = "14px";
+        const t = E("input");
+        t.type = "number"; t.step = "0.1"; t.min = "0"; t.value = sh.cutAt; t.disabled = i === 0;
+        t.addEventListener("input", () => { sh.cutAt = parseFloat(t.value) || 0; draw(); });
+        grid.append(labeled("起点（秒）", t));
+        if (i > 0) grid.append(labeled("转场", dd(TRANSITIONS, sh.transition, (v) => { sh.transition = v; })));
+        grid.append(labeled("景别", dd(SHOT_SIZES, sh.size, (v) => { sh.size = v; draw(); })));
+        grid.append(labeled("运镜", dd(CAMERA_MOTIONS, sh.motion, (v) => { sh.motion = v; draw(); })));
+        grid.append(labeled("幅度", dd(CAMERA_AMPLITUDE, sh.amplitude, (v) => { sh.amplitude = v; })));
+        grid.append(labeled("速度", dd(CAMERA_SPEED, sh.speed, (v) => { sh.speed = v; })));
+        pane.append(grid);
+
+        const f = E("div", "h3m-fld");
+        f.append(E("h3", null, "画面描述"));
+        f.append(E("div", "h3m-hint", "直接写这一镜发生什么，不用管语法。"));
         const ta = E("textarea");
-        ta.placeholder = "这一镜画面里发生什么？直接写，不用管语法。";
+        ta.style.minHeight = "110px";
         ta.value = sh.description || "";
-        ta.addEventListener("input", () => { sh.description = ta.value; runCheck(); });
-        card.append(ta);
+        ta.addEventListener("input", () => { sh.description = ta.value; });
+        ta.addEventListener("change", draw);
+        f.append(ta);
+        pane.append(f);
 
-        card.append(E("div", "h3sm-lab", "本镜引用"));
-        card.append(mediaPicker(sh.refs, (k) => {
+        const f1 = E("div", "h3m-fld");
+        f1.append(E("h3", null, "本镜引用素材"));
+        f1.append(picker(sh.refs, (k) => {
             const p = sh.refs.indexOf(k);
             if (p >= 0) sh.refs.splice(p, 1); else sh.refs.push(k);
-        }));
+        }, ["image", "video"]));
+        pane.append(f1);
 
-        sh.lines.forEach((ln, j) => card.append(lineCard(sh, ln, j)));
-        const addLine = E("button", "h3sm-btn", "+ 台词");
-        addLine.style.marginTop = "8px";
-        addLine.onclick = () => { sh.lines.push(blankLine()); refresh(); };
-        card.append(addLine);
-
-        const end = i + 1 < script.shots.length ? script.shots[i + 1].cutAt : script.duration;
-        const span = end - sh.cutAt;
+        const f3 = E("div", "h3m-fld");
+        const h = E("div", "h3m-row");
+        h.append(E("h3", null, "台词"));
+        const sp2 = E("div"); sp2.style.flex = "1"; h.append(sp2);
         let need = 0;
-        for (const ln of sh.lines) if (ln.text?.trim()) need += SPEECH.padBefore + speechSeconds(ln.text) + SPEECH.padAfter;
+        for (const l of sh.lines) if (l.text?.trim()) need += SPEECH.padBefore + speechSeconds(l.text) + SPEECH.padAfter;
         if (sh.lines.length) {
-            const bar = E("div", "h3sm-mini");
-            bar.textContent = `本镜 ${span.toFixed(1)}s，台词含留白约需 ${need.toFixed(1)}s` +
-                (need > span ? "  ← 放不下" : "");
-            bar.style.marginTop = "6px";
-            if (need > span) { bar.style.color = "#ff9a9a"; card.classList.add("bad"); }
-            card.append(bar);
+            const m = E("span", "h3m-mini", `含留白约需 ${need.toFixed(1)}s / 本镜 ${span.toFixed(1)}s`);
+            if (need > span) m.style.color = "var(--warn)";
+            h.append(m);
         }
-        return card;
+        f3.append(h);
+        sh.lines.forEach((ln, j) => f3.append(lineCard(sh, ln, j)));
+        const addL = E("button", "h3m-btn", "+ 添加台词");
+        addL.onclick = () => { sh.lines.push(blankLine()); draw(); };
+        f3.append(addL);
+        pane.append(f3);
     }
 
     function lineCard(sh, ln, j) {
-        const c = E("div", "h3sm-line");
-        const h = E("div", "h3sm-line-hd");
-        h.append(E("span", "h3sm-lab", "台词 " + (j + 1)));
-        h.append(dropdown(VOICE_MODES, ln.mode, (v) => { ln.mode = v; }, "170px"));
-        h.append(E("span", "h3sm-lab", "语气"), comboBox(DELIVERY_PRESETS, ln.delivery, (v) => { ln.delivery = v; }));
-        const sp = E("div"); sp.style.flex = "1"; h.append(sp);
-        const n = E("span", "h3sm-mini", `${spokenChars(ln.text)} 字 · ${speechSeconds(ln.text).toFixed(1)}s`);
-        h.append(n);
-        const d = E("button", "h3sm-btn dim", "删");
-        d.onclick = () => { sh.lines.splice(j, 1); refresh(); };
+        const c = E("div", "h3m-line");
+        const h = E("div", "h3m-line-hd");
+        h.append(E("span", "h3m-lab", `第 ${j + 1} 句`));
+        h.append(dd(VOICE_MODES, ln.mode, (v) => { ln.mode = v; }));
+        const cnt = E("span", "h3m-mini", `${spokenChars(ln.text)} 字 · ${speechSeconds(ln.text).toFixed(1)}s`);
+        const sp = E("div"); sp.style.flex = "1";
+        h.append(sp, cnt);
+        const d = E("button", "h3m-btn gh", "✕");
+        d.onclick = () => { sh.lines.splice(j, 1); draw(); };
         h.append(d);
         c.append(h);
 
-        const inp = E("textarea");
-        inp.style.minHeight = "38px";
-        inp.placeholder = "说什么？只写内容，语种标签和 <d> 会自动加。";
-        inp.value = ln.text || "";
-        inp.addEventListener("input", () => {
-            ln.text = inp.value;
-            n.textContent = `${spokenChars(ln.text)} 字 · ${speechSeconds(ln.text).toFixed(1)}s`;
-            runCheck();
+        const ta = E("textarea");
+        ta.style.minHeight = "50px";
+        ta.placeholder = "说什么？只写内容，语种标签和 <d> 会自动加。";
+        ta.value = ln.text || "";
+        ta.addEventListener("input", () => {
+            ln.text = ta.value;
+            cnt.textContent = `${spokenChars(ln.text)} 字 · ${speechSeconds(ln.text).toFixed(1)}s`;
         });
-        c.append(inp);
+        ta.addEventListener("change", draw);
+        c.append(ta);
 
+        const r = E("div", "h3m-row");
+        r.style.marginTop = "8px";
+        r.append(E("span", "h3m-lab", "语气"), combo(DELIVERY_PRESETS, ln.delivery, (v) => { ln.delivery = v; }));
         const audio = mediaList.filter((m) => m.kind === "audio");
         if (audio.length) {
-            const r = E("div", "h3sm-row");
-            r.style.marginTop = "6px";
-            r.append(E("span", "h3sm-lab", "音色"));
-            r.append(dropdown([{ id: "", label: "（跟随全局）" },
-                ...audio.map((m) => ({ id: m.key, label: m.label }))],
-                ln.voiceRef, (v) => { ln.voiceRef = v; }, "200px"));
-            c.append(r);
+            r.append(E("span", "h3m-lab", "音色"),
+                dd([{ id: "", label: "（跟随全局）" }, ...audio.map((m) => ({ id: m.key, label: m.label }))],
+                    ln.voiceRef, (v) => { ln.voiceRef = v; }));
         }
+        c.append(r);
         return c;
     }
 
-    function runCheck() {
-        const probs = validate(script);
-        let bar = body.querySelector(".h3sm-checkbar");
-        if (bar) bar.remove();
-        bar = E("div", "h3sm-warn h3sm-checkbar" + (probs.length ? "" : " h3sm-ok"));
-        bar.textContent = probs.length ? "" : "✅ 没有发现问题";
-        if (probs.length) {
-            bar.append(E("div", null, `⚠ ${probs.length} 个问题：`));
-            probs.forEach((p, i) => bar.append(E("div", null, `${i + 1}. ${p}`)));
-        }
-        body.prepend(bar);
-        status.textContent = probs.length ? `${probs.length} 个问题待处理` : "校验通过";
-        status.style.color = probs.length ? "#ff9a9a" : "#a9d69a";
-    }
-
-    refresh();
+    draw();
     return mask;
 }
 

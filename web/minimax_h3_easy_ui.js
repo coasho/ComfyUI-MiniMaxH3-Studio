@@ -1148,6 +1148,19 @@ function hasScript(node) {
     return Boolean(s?.shots?.length);
 }
 
+/**
+ * 剧本 -> prompt 框。剧本存在时它就是唯一真相源，prompt 框只是派生视图，
+ * 因此同时清掉富文本 doc，避免旧的 @ 芯片/台词块残留造成两处不一致。
+ */
+function syncPromptFromScript(node) {
+    if (!hasScript(node)) return;
+    const text = assemble(node.properties[SCRIPT_PROP], scriptMediaTokens(node, normalizeLinks(node)));
+    const widget = getWidget(node, "prompt");
+    if (widget) widget.value = text;
+    delete node.properties[PROMPT_DOC_PROP];
+    if (node.__h3Editor) renderEditorFromNode(node, true);
+}
+
 function installScriptEditorButton(node) {
     if (node.__h3ScriptBtn) return;
     node.__h3ScriptBtn = true;
@@ -1160,6 +1173,9 @@ function installScriptEditorButton(node) {
         openScriptModal(node, scriptMediaList(node), (script) => {
             node.properties[SCRIPT_PROP] = script;
             w.name = label();
+            // 把拼好的提示词回写到 prompt 框，避免「节点上看到的」与「实际发送的」是两回事。
+            // 剧本是唯一真相源，prompt 框是它的只读派生视图。
+            syncPromptFromScript(node);
             node.setDirtyCanvas?.(true, true);
         });
     });

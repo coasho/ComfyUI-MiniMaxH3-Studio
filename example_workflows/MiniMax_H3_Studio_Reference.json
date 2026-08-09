@@ -890,73 +890,7 @@
             "media_type": "image",
             "order": 1
           }
-        ],
-        "minimax_h3_script_v1": {
-          "version": 3,
-          "duration": 15,
-          "language": "English",
-          "taskTypes": [
-            "ref2v"
-          ],
-          "entities": [
-            {
-              "id": "e_demo1",
-              "kind": "identity",
-              "name": "窗边的女人",
-              "desc": "A young woman in a plain grey hoodie, shoulder-length dark brown hair (NOT black, NOT auburn), calm brown eyes.",
-              "visible": true,
-              "bindings": [
-                {
-                  "mediaKey": "15:0",
-                  "kind": "identity",
-                  "retention": "",
-                  "transferTo": "",
-                  "note": ""
-                }
-              ],
-              "voiceKey": "",
-              "language": ""
-            }
-          ],
-          "sections": {
-            "summary": "A single fifteen-second take. She sits at a rain-streaked window, notices something outside, and says one quiet line. Calm, unhurried, almost no camera movement.",
-            "art_style": "",
-            "overall_soundscape": "Steady rain on glass, a low room tone, the faint clink of a spoon, all mixed well below the dialogue.",
-            "non_diegetic_music": "A sparse piano figure at low volume, entering after the line and never covering the voice."
-          },
-          "notRetained": [
-            "the reference's plain background",
-            "the frontal framing of the reference"
-          ],
-          "media": {
-            "15:0": {
-              "kind": "image",
-              "role": ""
-            }
-          },
-          "shots": [
-            {
-              "cutAt": 0,
-              "size": "medium",
-              "angle": "eye",
-              "motion": "push in",
-              "amplitude": "small",
-              "speed": "slow",
-              "transition": "cut",
-              "description": "A small cafe window at dusk, rain running down the glass, warm lamplight inside. She sits with both hands around a mug, looking out, then turns slightly toward the glass.",
-              "beats": [],
-              "lines": [
-                {
-                  "text": "It stopped raining on the other side.",
-                  "entityId": "e_demo1",
-                  "delivery": "low and unhurried, almost to herself",
-                  "mode": "onscreen",
-                  "continuity": "complete"
-                }
-              ]
-            }
-          ]
-        }
+        ]
       },
       "widgets_values": [
         "reference",

@@ -1,0 +1,395 @@
+{
+  "id": "b7f3c1e2-9a04-4d55-8c31-6e2a7f0d4b18",
+  "revision": 0,
+  "last_node_id": 8,
+  "last_link_id": 6,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MiniMaxH3VoiceDesign",
+      "pos": [
+        40,
+        120
+      ],
+      "size": [
+        420,
+        330
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "seeds",
+          "type": "STRING",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3VoiceDesign"
+      },
+      "widgets_values": [
+        "年轻女性，二十岁上下。音色清亮偏薄，略带气声，语速中等偏快，句尾轻微上扬，情绪明亮但不夸张。",
+        "风来了。你看，整片花都在往一个方向倒。",
+        "Chinese",
+        4,
+        0,
+        true
+      ],
+      "title": "① 文字描述音色（抽卡挑选）"
+    },
+    {
+      "id": 2,
+      "type": "PreviewAudio",
+      "pos": [
+        520,
+        120
+      ],
+      "size": [
+        380,
+        140
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 1
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAudio"
+      },
+      "widgets_values": [],
+      "title": "并排试听 4 条候选"
+    },
+    {
+      "id": 3,
+      "type": "SaveAudio",
+      "pos": [
+        520,
+        300
+      ],
+      "size": [
+        380,
+        150
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 2
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveAudio"
+      },
+      "widgets_values": [
+        "voice/design"
+      ],
+      "title": "挑定后存下来"
+    },
+    {
+      "id": 4,
+      "type": "PreviewAny",
+      "pos": [
+        520,
+        490
+      ],
+      "size": [
+        380,
+        110
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 3
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "各条候选的 seed"
+    },
+    {
+      "id": 5,
+      "type": "LoadAudio",
+      "pos": [
+        40,
+        640
+      ],
+      "size": [
+        420,
+        140
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "audio"
+          }
+        },
+        {
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "link": null,
+          "widget": {
+            "name": "audioUI"
+          }
+        },
+        {
+          "name": "upload",
+          "type": "AUDIOUPLOAD",
+          "link": null,
+          "widget": {
+            "name": "upload"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadAudio"
+      },
+      "widgets_values": [
+        "",
+        null,
+        null
+      ],
+      "title": "参考音色（5~15 秒干净人声）"
+    },
+    {
+      "id": 6,
+      "type": "MiniMaxH3VoiceClone",
+      "pos": [
+        40,
+        830
+      ],
+      "size": [
+        420,
+        330
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "ref_audio",
+          "type": "AUDIO",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            5,
+            6
+          ]
+        },
+        {
+          "name": "seeds",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3VoiceClone"
+      },
+      "widgets_values": [
+        "我要完了吗……菲比啾比。",
+        "Chinese",
+        0,
+        "",
+        "",
+        1,
+        true
+      ],
+      "title": "② 复刻这个音色说新台词"
+    },
+    {
+      "id": 7,
+      "type": "PreviewAudio",
+      "pos": [
+        520,
+        830
+      ],
+      "size": [
+        380,
+        140
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 5
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAudio"
+      },
+      "widgets_values": [],
+      "title": "试听"
+    },
+    {
+      "id": 8,
+      "type": "SaveAudio",
+      "pos": [
+        520,
+        1010
+      ],
+      "size": [
+        380,
+        150
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 6
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveAudio"
+      },
+      "widgets_values": [
+        "voice/clone"
+      ],
+      "title": "存下来"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "AUDIO"
+    ],
+    [
+      2,
+      1,
+      0,
+      3,
+      0,
+      "AUDIO"
+    ],
+    [
+      3,
+      1,
+      1,
+      4,
+      0,
+      "STRING"
+    ],
+    [
+      4,
+      5,
+      0,
+      6,
+      0,
+      "AUDIO"
+    ],
+    [
+      5,
+      6,
+      0,
+      7,
+      0,
+      "AUDIO"
+    ],
+    [
+      6,
+      6,
+      0,
+      8,
+      0,
+      "AUDIO"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "路线 A · 文字描述音色（没有参考音频时用）",
+      "bounding": [
+        20,
+        60,
+        900,
+        570
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "路线 B · 参考音频克隆（要指定音色时用，不抽卡）",
+      "bounding": [
+        20,
+        580,
+        900,
+        600
+      ],
+      "color": "#88A",
+      "font_size": 24,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.8,
+      "offset": [
+        60,
+        20
+      ]
+    }
+  },
+  "version": 0.4
+}

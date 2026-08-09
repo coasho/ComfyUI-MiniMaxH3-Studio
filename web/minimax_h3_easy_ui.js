@@ -1,9 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { openScriptModal } from "./h3_script_modal.js";
-import { translateLines, releaseAuxModels } from "./h3_caption.js";
 import { openModelManager, modelStatus } from "./h3_models.js";
-import { assemble, blankScript, SCRIPT_PROP,
-         needsTranslation, applyTranslations } from "./h3_script_editor.js";
 
 const NODE_CLASS = "MiniMaxH3Easy";
 const LOADER_CLASS = "MiniMaxH3EasyLoader";
@@ -1168,236 +1164,6 @@ function getInputConnection(canvas) {
     return { targetNode: node };
 }
 
-/** 已连接素材 -> 弹窗用的清单（带缩略图） */
-function scriptMediaList(node) {
-    return normalizeLinks(node).map((link) => {
-        const src = app.graph?.getNodeById?.(link.source_id);
-        const title = src?.title || src?.type || `节点 ${link.source_id}`;
-        const file = src?.widgets?.find?.((w) => /image|audio|video|file/i.test(w?.name || ""))?.value;
-        const label = typeof file === "string" && file ? file : title;
-        let previewUrl = "";
-        if (link.media_type === "image" && typeof file === "string" && file) {
-            previewUrl = `/view?filename=${encodeURIComponent(file)}&type=input`;
-        }
-        return { key: `${link.source_id}:${link.source_slot}`, label, kind: link.media_type, previewUrl };
-    });
-}
-
-/** 素材 key -> <Picture N>/<Audio N>/<Video N>，编号按各类型独立递增 */
-function scriptMediaTokens(node, runtimeLinks) {
-    const counters = { image: 0, video: 0, audio: 0 };
-    const tag = { image: "Picture", video: "Video", audio: "Audio" };
-    const map = {};
-    for (const link of runtimeLinks) {
-        const kind = link.media_type || "image";
-        counters[kind] = (counters[kind] || 0) + 1;
-        map[`${link.source_id}:${link.source_slot}`] = `<${tag[kind] || "Picture"} ${counters[kind]}>`;
-    }
-    return map;
-}
-
-/**
- * 剧本是否「在用」。只填了全局段落、还没加分镜也算——否则用户填完主体定义/画风
- * 点保存会毫无反应（判据只看 shots.length 时踩过这个坑）。
- */
-function hasScript(node) {
-    const s = node?.properties?.[SCRIPT_PROP];
-    if (!s) return false;
-    if (s.shots?.length) return true;
-    if (Object.values(s.sections || {}).some((v) => String(v || "").trim())) return true;
-    if (s.notRetained?.length || s.taskTypes?.length) return true;
-    // 只配了实体（描述/素材绑定/音色）也算在用
-    if ((s.entities || []).some((e) => e?.desc?.trim() || e?.voiceKey ||
-                                       (e?.bindings || []).some((b) => b?.mediaKey))) return true;
-    // v2 及更早的角色模型，迁移前也要认得
-    if ((s.characters || []).some((c) => c?.desc?.trim() || c?.identityKey || c?.voiceKey)) return true;
-    return Object.values(s.media || {}).some((m) => m?.role);
-}
-
-/**
- * 剧本 -> prompt 框。
- *
- * 中文剧本会先整批交给 LLM 译成英文再拼装：H3 的官方语法和示例全是英文，
- * 中文散文喂进去结果会乱。台词正文不参与翻译，原样保留。
- * 翻译只发生在这里（保存并应用），因为 assemble() 在排队时也要同步跑，
- * 那个位置发不了网络请求。
- *
- * 剧本本身仍存中文，下次打开继续用中文编辑。
- */
-/**
- * 检查每条素材绑定都能解析成 <Picture N>/<Audio N>。
- *
- * assemble() 遇到解析不了的 mediaKey 会直接跳过，于是「界面上明明绑了参考图，
- * 提示词里一张图都没有」——这种静默丢弃必须拦住，宁可拒绝保存也不能让人
- * 拿着一份没有参考图的提示词去跑。
- */
-function unresolvedBindings(node, script, tokens) {
-    const bad = [];
-    const media = scriptMediaList(node);
-    const nameOf = (k) => media.find((m) => m.key === k)?.label || k;
-    for (const e of script.entities || []) {
-        for (const b of e.bindings || []) {
-            if (b.mediaKey && !tokens[b.mediaKey]) {
-                bad.push(`「${e.name || "未命名实体"}」的参考素材 ${nameOf(b.mediaKey)}`);
-            }
-        }
-        if (e.voiceKey && !tokens[e.voiceKey]) {
-            bad.push(`「${e.name || "未命名实体"}」的音色 ${nameOf(e.voiceKey)}`);
-        }
-    }
-    return bad;
-}
-
-async function syncPromptFromScript(node, onProgress) {
-    if (!hasScript(node)) return { ok: false };
-    const script = node.properties[SCRIPT_PROP];
-    let out = script;
-    let translated = 0;
-
-    const tokens = scriptMediaTokens(node, normalizeLinks(node));
-    const bad = unresolvedBindings(node, script, tokens);
-    if (bad.length) {
-        throw new Error(
-            `这些素材没有接到节点的 media 口上，提示词里会缺：\n・${bad.join("\n・")}\n` +
-            `请确认对应的 LoadImage / LoadAudio 节点还连在 media 输入上，` +
-            `然后重新打开编辑器在实体卡上重选一次。`);
-    }
-
-    const zh = needsTranslation(script);
-    if (zh.length) {
-        onProgress?.(`把 ${zh.length} 段描述交给模型译成英文并补颜色排除项…
-`
-                     + `首次调用要装载 8.3GB 模型，会慢一些`);
-        const map = await translateLines(zh);          // 失败就抛，由调用方报出来
-        out = applyTranslations(script, map);
-        translated = Object.keys(map).length;
-    }
-
-    const text = assemble(out, tokens);
-    const widget = getWidget(node, "prompt");
-    if (widget) widget.value = text;
-
-    // 总时长也要落到节点上。分镜的时间码全是按它算的，节点还停在旧的
-    // seconds，出来的片子长度和剧本对不上——时间码就全指错地方了。
-    const secW = getWidget(node, "seconds");
-    if (secW && Number.isFinite(+script.duration)) {
-        const want = Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, +script.duration));
-        if (secW.value !== want) {
-            secW.value = want;
-            secW.callback?.(want);       // 走节点自己的回调，联动别的控件
-        }
-    }
-
-    delete node.properties[PROMPT_DOC_PROP];
-    if (node.__h3Editor) renderEditorFromNode(node, true);
-
-    // 翻译用的 8.3GB VLM 到这里就没用了。下一步多半是点生成，
-    // 那时 H3 要吃满 16GB，不能让它还占着。
-    if (translated) {
-        const r = await releaseAuxModels();
-        if (r?.before?.vram_gb != null) {
-            console.log(`[MiniMaxH3-Studio] 释放辅助模型：显存 ${r.before.vram_gb} -> ${r.after.vram_gb} GB`);
-        }
-    }
-
-    // 拼完再核一次：绑定过素材却一个 <Picture N> 都没出现，说明还是漏了
-    const boundImages = (script.entities || []).some(
-        (e) => (e.bindings || []).some((b) => b.mediaKey));
-    if (boundImages && !/<(Picture|Video) \d+>/.test(text)) {
-        throw new Error("绑定了参考素材，但拼出来的提示词里没有任何 <Picture N>。" +
-                        "提示词框未改动，请把这句话发给开发者。");
-    }
-    return { ok: true, translated, total: zh.length };
-}
-
-/**
- * 音色工作台选好一条后：在图里建一个 LoadAudio 指向它，登记成一条 media，
- * 返回新的 mediaKey。这样用户不用手工连线，图上也看得见这条音色从哪来。
- */
-function attachGeneratedVoice(node, entry) {
-    const file = entry?.file;
-    if (!file) return "";
-    const links = ensureLinks(node);
-
-    // 名字后面缀上文件哈希：音色库里出现过两条同名的，画布上两个节点标题
-    // 一模一样、实体下拉框里两行一模一样，只能靠听来分辨
-    const stem = String(file).replace(/\.[^.]+$/, "");
-    const id = stem.includes("_") ? stem.slice(stem.lastIndexOf("_") + 1) : "";
-    const label = entry.name ? `${entry.name}${id ? ` · ${id}` : ""}（生成音色）` : file;
-
-    // 同一个文件已经接过就直接复用，别每次都堆一个新节点
-    for (const link of links) {
-        if (String(link.media_type) !== "audio") continue;
-        const src = app.graph?.getNodeById?.(link.source_id);
-        const w = src?.widgets?.find?.((x) => x?.name === "audio");
-        if (w && String(w.value) === file) {
-            return { key: `${link.source_id}:${link.source_slot || 0}`, label, kind: "audio" };
-        }
-    }
-
-    const loader = LiteGraph.createNode("LoadAudio");
-    if (!loader) {
-        alert("建不出 LoadAudio 节点，音色已保存到 input 目录，请手动加载。");
-        return null;
-    }
-    app.graph.add(loader);
-    loader.title = `音色：${entry.name || file}${id ? ` · ${id}` : ""}`;
-    // 文件是刚写进 input/ 的，下拉框的选项列表是节点定义时快照的，得手动补进去
-    const w = loader.widgets?.find?.((x) => x?.name === "audio");
-    if (w) {
-        if (Array.isArray(w.options?.values) && !w.options.values.includes(file)) {
-            w.options.values = [...w.options.values, file].sort();
-        }
-        w.value = file;
-    }
-    loader.pos = [node.pos[0] - 340, node.pos[1] + 40 + links.length * 90];
-    loader.setDirtyCanvas?.(true, true);
-
-    links.push({ source_id: loader.id, source_slot: 0, media_type: "audio" });
-    normalizeLinks(node, false);
-    node.setDirtyCanvas?.(true, true);
-    return { key: `${loader.id}:0`, label, kind: "audio" };
-}
-
-function installScriptEditorButton(node) {
-    if (node.__h3ScriptBtn) return;
-    node.__h3ScriptBtn = true;
-    node.properties ||= {};
-    node.properties[SCRIPT_PROP] ||= blankScript();
-    const label = () => {
-        if (!hasScript(node)) return "📝 编辑剧本";
-        const n = node.properties[SCRIPT_PROP]?.shots?.length || 0;
-        return n ? `📝 编辑剧本（${n} 镜 · 已接管提示词）` : "📝 编辑剧本（已接管提示词）";
-    };
-    const w = node.addWidget("button", label(), null, () => {
-        // 还没排过分镜的空剧本，总时长跟节点走；已经排过就以剧本为准，
-        // 否则一打开就把用户排好的时间码顶掉了。
-        const s0 = node.properties[SCRIPT_PROP];
-        const secW0 = getWidget(node, "seconds");
-        if (s0 && !s0.shots?.length && secW0 && Number.isFinite(+secW0.value)) {
-            s0.duration = Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, +secW0.value));
-        }
-        // 返回 true = 关闭弹窗；返回字符串 = 保存没生效，弹窗留着并显示这句话
-        openScriptModal(node, scriptMediaList(node), async (script, onProgress) => {
-            node.properties[SCRIPT_PROP] = script;
-            w.name = label();
-            node.setDirtyCanvas?.(true, true);
-            if (!hasScript(node)) {
-                // 空剧本静默返回过一次，用户以为保存失效；这里说清楚，且不能把编辑器一起关掉。
-                return "剧本还是空的，提示词框未改动。至少填一项：" +
-                       "全局设置里的整体概述 / 画风 / 环境音 / 配乐，或添加一个分镜。";
-            }
-            try {
-                onProgress?.("检查素材绑定…");
-                await syncPromptFromScript(node, onProgress);
-            } catch (err) {
-                return err.message;
-            }
-            return true;
-        }, (entry) => attachGeneratedVoice(node, entry));
-    });
-    w.serialize = false;
-}
 
 function buildRuntimePrompt(node, runtimeLinks) {
     const promptWidget = getWidget(node, "prompt");
@@ -1467,12 +1233,8 @@ function patchGraphToPrompt() {
             const promptIsLinked = promptSlot?.link != null
                 && Array.isArray(promptNode.inputs.prompt);
             if (!promptIsLinked) {
-                // 剧本存在时用 prompt 框里的内容 —— 那是「保存并应用」时拼装并
-                // 译成英文的结果。这里不能重新 assemble：翻译要走 LLM，是异步的，
-                // 排队路径同步跑不了，重拼会把英文变回中文。
-                promptNode.inputs.prompt = hasScript(node)
-                    ? String(getWidgetValue(node, "prompt", "") || "")
-                    : buildRuntimePrompt(node, runtimeLinks);
+                // 把 @文件名 解析成 <Picture N>/<Audio N> 再送出去
+                promptNode.inputs.prompt = buildRuntimePrompt(node, runtimeLinks);
             }
             promptNode.inputs.mode = canonicalOption("mode", getWidgetValue(node, "mode", MODE_IMAGE));
             promptNode.inputs.resolution = canonicalOption("resolution", getWidgetValue(node, "resolution", "480P"));
@@ -3830,7 +3592,6 @@ function installNode(nodeType, nodeData) {
         patchCanvas();
         installQuickCreateCapture(app.canvas);
         installPromptEditorSoon(this);
-        installScriptEditorButton(this);
         const modeWidget = getWidget(this, "mode");
         if (modeWidget) {
             const originalCallback = modeWidget.callback;

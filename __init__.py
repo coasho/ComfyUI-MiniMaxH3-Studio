@@ -12,25 +12,17 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3EasyOutput": "MiniMax H3 Easy Output",
 }
 
-# 图生文反推节点。依赖 transformers / onnxruntime，装不上不该拖垮主节点。
-try:
-    from . import caption_node
-    NODE_CLASS_MAPPINGS.update(caption_node.NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(caption_node.NODE_DISPLAY_NAME_MAPPINGS)
-except Exception:  # pragma: no cover
-    import traceback
-    print("[MiniMaxH3-Studio] 反推节点注册失败，其余节点不受影响：")
-    traceback.print_exc()
-
-# 图生文反推节点。依赖 transformers / onnxruntime，装不上不该拖垮主节点。
-try:
-    from . import caption_node
-    NODE_CLASS_MAPPINGS.update(caption_node.NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(caption_node.NODE_DISPLAY_NAME_MAPPINGS)
-except Exception:  # pragma: no cover
-    import traceback
-    print("[MiniMaxH3-Studio] 反推节点注册失败，其余节点不受影响：")
-    traceback.print_exc()
+# 附属节点各自兜住：反推要 transformers / onnxruntime，音色要 ComfyUI-Qwen3-TTS，
+# 哪个装不上都不该拖垮主节点。
+for _mod_name, _what in (("caption_node", "反推节点"), ("voice_node", "音色节点")):
+    try:
+        _m = __import__(f"{__name__}.{_mod_name}", fromlist=[_mod_name])
+        NODE_CLASS_MAPPINGS.update(_m.NODE_CLASS_MAPPINGS)
+        NODE_DISPLAY_NAME_MAPPINGS.update(_m.NODE_DISPLAY_NAME_MAPPINGS)
+    except Exception:  # pragma: no cover
+        import traceback
+        print(f"[MiniMaxH3-Studio] {_what}注册失败，其余节点不受影响：")
+        traceback.print_exc()
 
 WEB_DIRECTORY = "./web"
 

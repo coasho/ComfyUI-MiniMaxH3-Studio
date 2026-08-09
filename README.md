@@ -2,22 +2,20 @@
 
 [中文说明](README_CN.md)
 
-A script editor for MiniMax H3. It hides the official six-section reference grammar
-and lets you write content instead — the `MiniMax H3 Easy` node grows a
-**📝 Edit script** button, and everything happens in there.
+A ComfyUI node pack for MiniMax H3. Images, video and audio share one sortable `Media`
+input and the prompt box references them inline as `@name`; the prompt itself you write
+yourself, in the official grammar.
 
-Subject/Speaker numbering, timecodes, `<d>` dialogue tags, retention declarations and
-the official binding sentences are all assembled for you at save time.
-
-It also ships the two things that otherwise stall a first install: a **one-click model
-downloader** and **example workflows that use nothing but core ComfyUI nodes**.
+It also ships the things that otherwise stall a first install: a **one-click model
+downloader**, **example workflows that use nothing but core ComfyUI nodes**, and two
+companion nodes — **image captioning** and **voice generation**.
 
 <p align="center">
   <img src="images/reference-editor-en.png" alt="The node with images, video and audio on one Media input" width="720">
 </p>
 
-<sup>Images, video and audio all share one sortable `Media` input, and the prompt box
-references them inline as `@name`. The script editor sits on top of this.</sup>
+<sup>One `Media` input takes every asset; drag to reorder and that decides the
+`<Picture N>` / `<Audio N>` numbering.</sup>
 
 ---
 
@@ -33,9 +31,9 @@ Clone it into `ComfyUI/custom_nodes/`, then install the optional extras and rest
 pip install -r ComfyUI-MiniMaxH3-Studio/requirements.txt
 ```
 
-The three nodes themselves need nothing beyond what ComfyUI already has.
-`requirements.txt` only covers the editor's optional features (captioning, voice) — if
-a package is missing, that feature reports it and the nodes keep working.
+The three main nodes need nothing beyond what ComfyUI already has. `requirements.txt`
+only covers the captioning node; without it that node simply does not register and
+everything else keeps working.
 
 **ComfyUI ≥ `bdcb886` (2026-08-06 nightly) is strongly recommended.** That commit adds
 native MiniMax-H3 AV flow sampling (`ModelSamplingAV`); before it, the 4-step Turbo LoRA
@@ -49,21 +47,21 @@ starts over-sharpening. The examples ship at 6 steps, scheduler `simple`, streng
 The one case where the older `ckpt850` still wins is 4 steps *and* heavy motion, where v4
 can smear; going to 6–8 steps fixes that instead.
 
-Voice generation additionally needs [ComfyUI-Qwen3-TTS](https://github.com/lrzjason/ComfyUI-Qwen3-TTS)
-installed alongside this package — it owns the TTS node classes this editor drives.
+The voice nodes additionally need [ComfyUI-Qwen3-TTS](https://github.com/lrzjason/ComfyUI-Qwen3-TTS)
+installed — this pack drives its TTS node classes. Without it the voice nodes do not
+register and nothing else is affected.
 
 ---
 
 ## One-click model download
 
-The H3 checkpoints live across three HuggingFace repos under near-identical names, and
-you need six files before anything runs. Don't copy links by hand.
+H3's weights live in three HuggingFace repos under near-identical names, and you need
+six files before anything runs. Don't copy links by hand.
 
-Open the **MiniMax H3 Easy Loader** node and press **⬇ 下载模型 / Download models**.
-It shows what is present, what is missing, and how many bytes each one still needs.
-The same button appears inside the captioning and voice dialogs when their model is absent.
+Open the **MiniMax H3 Loader** node and hit **⬇ Download models**: what you have, what is
+missing and how many bytes are left, all in one panel.
 
-Or from a terminal, without starting ComfyUI:
+You can also run it without ComfyUI:
 
 ```bash
 python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --list
@@ -73,262 +71,241 @@ python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --list
 python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --required
 ```
 
-| id | required | size | goes to |
+| id | required | size | destination |
 |---|---|---|---|
 | `h3_ref2va` | ✔ | 19.5 GB | `models/diffusion_models/` |
 | `h3_fl2va` | ✔ | 19.5 GB | `models/diffusion_models/` |
 | `h3_text_encoder` | ✔ | 14.6 GB | `models/text_encoders/` |
-| `h3_text_encoder_int8` | — | 25.3 GB | alternative for pre-Blackwell GPUs |
-| `h3_vae` | ✔ | 5.4 GB | `models/vae/` (video + audio VAE) |
-| `h3_turbo_lora` | ✔ | 592 MB | `models/loras/` — v4-600 EMA, the author's pick |
-| `h3_turbo_lora_ckpt850` | — | 592 MB | legacy, only better at 4 steps **and** heavy motion |
+| `h3_text_encoder_int8` | — | 25.3 GB | alternative for non-50-series GPUs |
+| `h3_vae` | ✔ | 5.4 GB | `models/vae/` (video + audio) |
+| `h3_turbo_lora` | ✔ | 592 MB | `models/loras/` — v4-600 EMA, author's pick |
+| `h3_turbo_lora_ckpt850` | — | 592 MB | older, only wins at 4 steps + heavy motion |
 | `qwen3vl_caption` | — | 8.3 GB | `models/LLM/Qwen3-VL-4B-Instruct/` |
-| `wd14_tagger` | — | 1.2 GB | reuses `comfyui-wd14-tagger/models/` if installed |
+| `wd14_tagger` | — | 1.2 GB | reuses `comfyui-wd14-tagger`'s models dir if present |
 | `tts_voicedesign` | — | 4.2 GB | `models/TTS/Qwen/…-VoiceDesign/` |
 | `tts_base` | — | 4.2 GB | `models/TTS/Qwen/…-Base/` |
 
-Details that matter in practice:
+Details that actually save you:
 
-- **Resumable.** Downloads land as `.part` next to the target and continue from wherever
-  they stopped — cancel, close ComfyUI, lose the connection, it picks up. `huggingface_hub`'s
-  `snapshot_download(local_dir=…)` has no resume on Xet storage, so this uses plain
-  `Range` requests with its own read timeout instead.
-- **No second copy.** Files go straight to the ComfyUI models directory, not through
+- **Resumable.** Downloads go to a `.part` beside the target and continue from where they
+  stopped — cancel, close ComfyUI, lose the network, it does not matter.
+  `huggingface_hub`'s `snapshot_download(local_dir=…)` has no resume on Xet storage, so
+  killing the process loses gigabytes; this uses raw `Range` requests with its own read
+  timeout instead.
+- **No second copy.** Files land straight in ComfyUI's models directory, never through
   `~/.cache/huggingface`.
-- **Mirrors.** Set `HF_ENDPOINT=https://hf-mirror.com` and it goes there.
-- **Verified.** `.safetensors` are checked against their own header before being renamed
-  into place, so a half-downloaded file never reports itself ready. Files already on disk
-  are trusted if they self-verify, even if their byte count differs from the manifest
-  (repacks of the same weights differ by a few dozen bytes).
+- **Mirrors.** Set `HF_ENDPOINT=https://hf-mirror.com`.
+- **Verification.** A `.safetensors` must pass its own header check before it is renamed
+  into place, so a half file is never mistaken for a complete one. Files already on disk
+  are accepted on that self-check alone rather than a byte-for-byte match against the
+  manifest — different repacks of the same weights differ by a few dozen bytes, and
+  judging by size would make you re-download 19.5 GB for nothing.
 
 ---
 
 ## Example workflows
 
-`example_workflows/` contains three graphs that use **only core ComfyUI nodes plus this
-package's own nodes** — no KJNodes, no wavespeed, no patched samplers.
+Four graphs in `example_workflows/`, using **only core ComfyUI nodes plus this pack's
+own** — no KJNodes, no wavespeed, no patched samplers.
 
-| File | Mode | Needs |
+| file | purpose | needs |
 |---|---|---|
-| `MiniMax_H3_Studio_Reference.json` | reference-to-video | `h3_ref2va` + text encoder + VAEs + Turbo LoRA |
-| `MiniMax_H3_Studio_TextToVideo.json` | text-to-video | `h3_fl2va` + text encoder + VAEs + Turbo LoRA |
-| `Image_to_Prompt_Bilingual.json` | image → prompt, no video | `qwen3vl_caption` (+ `wd14_tagger` for anime) |
+| `MiniMax_H3_Studio_Reference.json` | reference-to-video | `h3_ref2va` + text encoder + VAE + Turbo LoRA |
+| `MiniMax_H3_Studio_TextToVideo.json` | text- / image-to-video | `h3_fl2va` + text encoder + VAE + Turbo LoRA |
+| `Image_to_Prompt_Bilingual.json` | captioning, no video | `qwen3vl_caption` (+ `wd14_tagger` for anime) |
+| `MiniMax_H3_Voice.json` | voice generation, no video | `tts_voicedesign` or `tts_base` |
 
-The two video graphs come with a short demo script already loaded, so opening the editor
-shows a filled-in structure rather than a blank form. They point at `input/example.png`,
-which ships with ComfyUI; swap in your own reference sheet.
-
-**`Image_to_Prompt_Bilingual.json`** is the standalone captioning graph: one image in,
-five texts out — natural language and comma-separated tags, each in English and Chinese,
-plus the raw WD14 tags. Each of the four is behind its own switch, since every one you
-turn on costs another model pass. The Chinese is translated *from the English*, not
-written separately, so the two always say the same thing — otherwise you would proofread
-the Chinese and ship an English that says something else. It unloads the 8.3 GB VLM when
-it finishes; turn `unload_after` off if you are running it in a loop.
+Both video graphs point their reference image at ComfyUI's bundled `input/example.png` —
+swap in your own reference sheet.
 
 ---
 
-## The entity model
+## 1. Aspect ratio: don't let the first frame stretch
 
-**The official `<Subject N>` is not just "a character."** It is any reusable declared
-entity. The full set of official visible content types:
+- **`aspect_ratio = Auto (follow image)`** picks the closest official ratio from the first
+  frame / first reference image.
+- **`first_frame_fit = crop`** scales proportionally and centre-crops. This is the default.
+  The other setting, `stretch`, is core ComfyUI's original behaviour — it stretches the
+  image onto the canvas and distorts it.
 
-| Kind | Official phrase | Default retention |
+Together these two defaults give zero distortion for an image of any ratio. Locking the
+aspect ratio to something the source does not match still trims the edges — that is
+expected — but nothing is ever distorted.
+
+> With `resolution = Custom` the aspect ratio is ignored entirely: explicit width/height
+> wins, so `auto` has nothing to do. Pick a preset if you want the canvas to follow the image.
+
+---
+
+## 2. Writing the prompt
+
+Write the prompt yourself in the official grammar. The base modes (T2VA / I2VA / FL2VA /
+L2VA) use three sections — `integrated_multimodal_description`, `overall_soundscape`,
+`non_diegetic_music`. Reference-to-video (Ref2VA) uses six, adding `subject_definitions`,
+`summary` and `retention_analysis`.
+
+**I2VA must open with this exact line**, followed by a blank line:
+
+```
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+```
+
+### `<Subject N>` is not only "a character"
+
+It is any reusable declared entity. The official set of visible content types:
+
+| type | official phrase | default retention |
 |---|---|---|
-| Person | `identity and appearance` | fully_preserved |
-| Object / clothing / prop | `visible object appearance` | fully_preserved |
-| Scene / environment | `scene and environment` | fully_preserved |
-| Action / pose | `pose and movement` | **attribute_transfer** (needs a transfer target) |
-| Art style | `visual style` | weak_reference |
-| Off-screen voice | none (takes no Subject number) | — |
+| person | `identity and appearance` | fully_preserved |
+| object / clothing / prop | `visible object appearance` | fully_preserved |
+| scene / environment | `scene and environment` | fully_preserved |
+| action / pose | `pose and movement` | **attribute_transfer** (must name a target) |
+| art style | `visual style` | weak_reference |
+| off-screen voice | none (takes no Subject number) | — |
 
 Binding sentence: `The {phrase} of <Subject 1> {is|are} defined by <Picture 1>.`
-**One entity can bind several references** (front view + side view + a costume detail).
+One entity may bind several assets (front view + side view + costume detail).
 
-### The two numbering schemes are independent
+### The two numbering schemes are unrelated
 
-- `<Subject N>` follows **declaration order**, and only on-screen entities take a number
-- `(S1)(S2)` follows **first-speaking order**, and entities that never speak get none
+- `<Subject N>` follows **declaration order**, and only entities that appear on screen take a number
+- `(S1)(S2)` follows **first-speaking order**, and an entity that never speaks gets none
 
-So `<Subject 2> (S1)` is perfectly valid. Each card shows the numbers it will actually emit.
-
-### How to express the awkward cases
-
-| You want | Do this |
-|---|---|
-| Several characters talking | One "person" entity each; pick the speaker on the line card |
-| A different voice per character | Bind a voice reference to each entity |
-| Changing clothes mid-shot | Two "object" entities, then shot **beats**: "A removes uniform", "A wears red coat" |
-| A hands something to B | Beat kind "give", with three slots: who / what / to whom |
-| Anything stranger than that | Beat kind "custom", write the sentence yourself — `@` references still work |
-| No characters at all, just objects and scenery | Only object and scene entities, zero dialogue. Validation stays quiet |
-| One speaks Japanese, another Chinese | Set the language per entity; `<d>[Lang]` is emitted per line |
+So `<Subject 2> (S1)` is perfectly normal.
 
 ### `@` references
 
-Shot descriptions, beats, the summary and the soundscape all accept `@entityName`, resolved
-to `<Subject N>` on save. Typing `@` opens a completion list you drive with ↑ ↓ and Enter.
-Unresolved references are flagged in red and reported by validation.
+Write `@filename` in the prompt box to reference an asset on the `Media` input; at queue
+time it becomes `<Picture N>` / `<Audio N>` / `<Video N>`. Press `@` for a completion list,
+↑ ↓ to pick, Enter to insert. Switching `@ reference mode` to "by index" uses the asset's
+position on `Media` instead.
 
 <p align="center">
-  <img src="images/mention-popup-en.png" alt="Typing @ opens the media/entity picker" width="330">
+  <img src="images/mention-popup-en.png" alt="Press @ for the asset list" width="330">
 </p>
 
+### Official limits
+
+4–15 s, 24 fps, ≤9 images / ≤3 videos / ≤3 audio (≤12 mixed), prompt ≤7000 characters.
+Camera motion / amplitude / speed are controlled vocabularies, and **amplitude and speed
+have exactly two values each** (small/large, slow/fast). There is **no** official
+vocabulary for focal-length words like "wide-angle" or "macro", nor for shot size and
+camera angle — write those as ordinary English.
+
 ---
 
-## Image-to-text captioning (🔍)
+## 3. Captioning node
 
-Stop rewriting the appearance you already have in a reference sheet. Every reference binding
-on an entity card has a caption button.
+`Image to Prompt · Bilingual` takes one image and returns five texts: prose and
+comma-tags, each in English and Chinese, plus the raw WD14 tags. Each of the four has its
+own switch, because every one you enable costs another model pass.
 
-Two models cooperate — this is not an either/or:
+The Chinese is **translated from the English** rather than written separately: the two must
+say the same thing, otherwise you proof-read the Chinese, ship it, and the English you
+actually sent said something else. The 8.3 GB VLM is released when the run finishes; turn
+`unload_after` off if you are batching.
 
-| Model | Size | Job |
+Two models cooperate — this is **not** either/or:
+
+| model | size | job |
 |---|---|---|
-| `SmilingWolf/wd-eva02-large-tagger-v3` | 1.2 GB ONNX | Anime attribute extraction (best F1 in the v3 line, 0.4772) |
-| `Qwen/Qwen3-VL-4B-Instruct` | 8.3 GB bf16 | Writes sentences; good on both photoreal and anime |
+| `SmilingWolf/wd-eva02-large-tagger-v3` | 1.2 GB ONNX | discrete anime attributes (best F1 of the v3 line, 0.4772) |
+| `Qwen/Qwen3-VL-4B-Instruct` | 8.3 GB bf16 | prose description, works for both photo and anime |
 
-For anime images WD14 tags are extracted first and handed to the VLM **as ground truth**,
-with an explicit instruction that the tags beat its own reading on hair/eye/clothing colour.
-For photographs the tags are skipped.
+For anime, WD14 tags are extracted first and fed to the VLM as **ground truth**, with an
+explicit note that the tags beat its own reading on hair colour, eye colour and clothing.
+For photographs, turn `use_wd14_tags` off and go straight to the VLM.
 
-A third backend is any **OpenAI-compatible endpoint** (Ollama, LM Studio, a cloud API) —
-zero download, fill in the URL in the dialog.
-
-### Character-sheet layout artifacts are separated out
-
-WD14 also picks up `multiple views / turnaround / white background / spread arms` — these
-describe *that it is a character sheet*, not what the character looks like. Left in the
-description, H3 copies them into the frame (a T-pose on white *has* shown up in output).
-
-They are pulled out into **"not retained"** candidates you can tick straight into the script.
-Viewpoint tags are only proposed for removal when the image is actually a sheet — `profile`
-in a single side-view close-up is real composition, not an artifact.
+> What comes out is a **plain description** with no H3-specific processing — no
+> `<Subject N>` scaffolding, no "NOT adjacent colour" fences, no reference-sheet layout
+> stripping. What you do with it is your business.
 
 ---
 
-## Voice generation (🎙)
+## 4. Voice nodes
 
-**The "middle-aged auntie voice" problem is a selection problem, not a model problem.**
-VoiceDesign samples randomly; the same description with a different seed sounds quite
-different (measured intra-group similarity 0.989 — it really does drift). So the point of
-this panel is **several candidates side by side, auditioned before you commit**.
+**The "middle-aged lady voice" problem is a lack of choice, not a bad model.** VoiceDesign
+samples randomly, and the same description with a different seed lands somewhere quite
+different (measured within-group similarity 0.989 — it really does drift). So the
+`Voice Design` node generates 4 candidates by default, concatenated into one clip: hook up
+`PreviewAudio`, listen through, then put the seed reported on the `seeds` output into
+`seed` and set `count` back to 1 to lock it in.
 
-| Source | Model | Notes |
+| node | model | notes |
 |---|---|---|
-| Describe it | `Qwen3-TTS-12Hz-1.7B-VoiceDesign` 4.2 GB | Free-text description, random sampling — generate a few and pick |
-| Clone a reference | `Qwen3-TTS-12Hz-1.7B-Base` 4.2 GB | `x_vector_only` timbre vector from reference audio. No dice-rolling |
+| `Voice Design · from text` | `Qwen3-TTS-12Hz-1.7B-VoiceDesign` 4.2 GB | free-form description of the voice; random sampling, hence the candidates |
+| `Voice Clone · from audio` | `Qwen3-TTS-12Hz-1.7B-Base` 4.2 GB | extracts a timbre vector from reference audio; no dice-rolling |
 
-**CustomVoice is deliberately not used** — that fixed Vivian preset is where the auntie
-voice actually comes from.
+**CustomVoice is deliberately unused** (the fixed Vivian presets) — measurably the source
+of the "middle-aged lady" complaint.
 
-Measured timbre consistency (MFCC cosine): design intra-group 0.989, clone intra-group 0.997,
-clone across references 0.980 — cloning is tighter, and the reference genuinely decides the
-timbre. (The metric saturates towards 1.0 on short clips; trust your ears.)
+Measured timbre consistency (MFCC cosine): design within-group 0.989, clone within-group
+0.997, clone across references 0.980 — cloning is steadier, and the reference really does
+determine the timbre. (The metric saturates toward 1.0 on short clips, so trust your ears.)
 
-- **The audition text defaults to that entity's first real line from the script**, so you
-  hear the sentence that will be in the film
-- The chosen voice is written to `input/h3voice_*.wav` — reusable across scripts and restarts
-- Picking it **creates a `LoadAudio` node, fills in the filename, registers it as media and
-  binds it to the entity** automatically; re-picking the same file reuses the existing node
+Both nodes output a standard `AUDIO`, which **connects straight to the `Media` input of
+`MiniMax H3 Easy`** — no need to save a file and load it back. Add `SaveAudio` if you want
+to reuse the voice across sessions.
 
-> Voice files must sit in the **root** of `input/`: `LoadAudio` lists files with
-> `os.listdir(input_dir)` and does not recurse, so anything in a subdirectory is invisible
-> in its dropdown.
+> To feed a saved voice back through `LoadAudio`, the file must sit in the **root** of
+> `input/`: `LoadAudio` lists files with `os.listdir(input_dir)` and does not recurse, so
+> anything in a subdirectory never appears in the dropdown.
 
----
-
-## Chinese in, English out
-
-Editing in Chinese is far faster, but H3 wants English. On save, every prose field is sent
-through **Qwen3-VL as a translator** — not a lookup table — while:
-
-- **dialogue text is never touched** (it is what the character actually says)
-- `<Subject 1>`, `(S1)`, `@refs` and `<d>` tags are masked out before translation and
-  restored after, so the model cannot mangle them
-- colour exclusions (`dark brown, NOT black, NOT auburn`) are appended deterministically
-  afterwards in English — H3 needs every colour fenced against its neighbours or dark hair
-  drifts orange, and the VLM's own coverage of this was measured at 0% / 25% / 62% across
-  identical prompts
-
-The Chinese original stays in the node so you can keep editing it.
+Make the audition text the line the character actually says in the shot — otherwise what
+you heard is not what you get.
 
 ---
 
-## VRAM and RAM
+## 5. VRAM and RAM
 
-The captioning VLM is 8 GB and the voice model 4 GB — either one competing with H3 is an OOM.
+The captioning VLM is 8 GB and the voice models 4 GB; both will blow up alongside H3. So:
 
 - `MiniMaxH3Easy.generate()` unloads both before it starts
-- Both have an idle reaper that unloads after 10 minutes
-- Closing the caption/voice dialogs, finishing a save, and finishing a generation each
-  trigger an explicit release: ComfyUI's `free_memory` hook, `gc` ×3, `empty_cache`,
-  `ipc_collect`, and `EmptyWorkingSet` on Windows to hand pages back to the OS
+- each has a watchdog that unloads after 10 idle minutes
+- both companion nodes default to `unload_after = True` and release immediately: ComfyUI's
+  `free_memory`, `gc` ×3, `empty_cache`, `ipc_collect`, plus `EmptyWorkingSet` on Windows
+  to hand pages back to the OS
 
 Measured peaks on a 16 GB card: captioning 8.78 GB, voice 4.09 GB.
 
-> Models are never moved to CPU on unload. `model.to("cpu")` moves 8 GB of weights from
-> VRAM into RAM and leaves them there (resident set went 0.83 → 7.63 GB), which then
-> starved the ComfyUI process itself.
+> Unloading **never** does `.to("cpu")`. That moves 8 GB of weights from VRAM into RAM and
+> leaves them there (measured RSS 0.83 → 7.63 GB), starving ComfyUI itself instead.
 
 ---
 
-## What is not official
+## 6. Files
 
-Fields marked "非官方 / unofficial" in the panel have **no** official controlled vocabulary
-and are written into the description as ordinary English:
-
-- **Shot size** (close-up / medium / wide …)
-- **Camera angle** (eye level / low / dutch …)
-
-There is also **no** official vocabulary for focal-length words like "wide-angle" or "macro".
-Camera motion / amplitude / speed *are* official, and **amplitude and speed only have two
-levels each** (small/large, slow/fast).
-
----
-
-## Files
-
-| File | Role |
+| file | role |
 |---|---|
-| `nodes.py` | The three nodes: Loader / Easy / Output |
-| `download_models.py` | Model manifest, resumable downloader, HTTP routes, CLI |
-| `caption.py` | Captioning and save-time translation endpoints |
-| `caption_node.py` | The standalone image-to-prompt node (natural / tags × EN / ZH) |
-| `caption_node.py` | The `MiniMax H3 图生文反推` node (bilingual output) |
-| `voice.py` | Voice generation endpoints |
+| `nodes.py` | the three main nodes: Loader / Easy / Output |
+| `download_models.py` | manifest, resumable downloader, HTTP routes, CLI |
+| `caption.py` | captioning and translation backend |
+| `caption_node.py` | the `Image to Prompt · Bilingual` node |
+| `voice.py` | TTS model loading and unloading |
+| `voice_node.py` | the `Voice Design` / `Voice Clone` nodes |
 | `vram.py` | VRAM/RAM release, wired into ComfyUI's `free_memory` |
-| `web/h3_grammar.js` | **The grammar schema — single source of truth.** Extend the grammar here |
-| `web/h3_script_editor.js` | Data model, prompt assembly, validation, version migration |
-| `web/h3_script_modal.js` | The editor dialog |
-| `web/h3_caption.js` | Captioning dialog |
-| `web/h3_voice.js` | Voice studio dialog |
-| `web/h3_models.js` | Model download panel |
+| `web/minimax_h3_easy_ui.js` | node UI: Media input, `@` mention editor, drag-to-create |
+| `web/h3_models.js` | model download panel |
+| `web/h3_api.js` | HTTP helpers |
 
-### Design principle
+### The widgets_values contract
 
-**Structure only where H3's grammar demands machine-exact output** — Subject/Speaker
-numbering, timecodes, `<d>` tags, retention declarations, official binding sentences.
-Everything else is prose plus `@entity` references.
-
-v2 had this exactly backwards: it turned shot size and delivery into dropdowns while
-hard-coding the numbering that actually needs computing — which made clothing, props and
-character-free shots impossible to express.
-
-### Script version migration
-
-`v1 (single speaker) → v2 (character table) → v3 (entity model)` all migrate.
-`assemble()` migrates defensively, so hitting generate without ever opening the editor works.
+The 13 entries in `WIDGET_DEFAULTS` are the whole of it, and both reading and writing go
+**by name** rather than trusting litegraph's widget order. The in-node prompt editor is a
+DOM widget that gets spliced in after `prompt` and takes a slot during serialization; on
+load it is not installed yet, so you save 14 and read 13, and everything after
+`resolution` shifts by one. Rebuilding the array by name in `onSerialize` removes the
+whole class of problem.
 
 ---
 
 ## Credits
 
-The node layer — the single sortable `Media` input, the `@mention` prompt editor, the
-quick-create menu — comes from [nkxx188/ComfyUI-MiniMaxH3-Easy](https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy),
-MIT. This package builds the script editor, captioning, voice studio and model downloader
-on top of it.
+The node layer — the single sortable `Media` input, the `@`-mention prompt editor and
+drag-to-create — comes from
+[nkxx188/ComfyUI-MiniMaxH3-Easy](https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy) (MIT).
+This pack adds the model downloader, the captioning node and the voice nodes.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

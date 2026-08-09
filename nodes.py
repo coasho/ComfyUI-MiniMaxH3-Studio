@@ -20,6 +20,7 @@ import torch
 import torchaudio
 
 import comfy.model_management
+import comfy.utils
 import folder_paths
 import node_helpers
 import nodes
@@ -530,42 +531,28 @@ def _frame_length(seconds: float, fps: float) -> int:
     return block_count * 17 + 5
 
 
-def _fit_no_ringing(image, width, height):
-    """居中裁切到画布比例，再用面积平均缩放。不变形，也不产生振铃。
+def _fit_keyframe(image, width, height, crop):
+    """把关键帧放进画布。走官方的 comfy.utils.common_upscale —— ImageScale
+    节点内部就是这一行，裁剪几何和上游保持一致，不自己抄一遍。
 
-    不能用 h3._resize(..., "center")：它固定走 lanczos。lanczos 有负瓣，硬边
-    线稿上会留下过冲/下冲，而居中裁切之后缩放倍率通常接近 1（这里 0.818），
-    那圈振铃正好落在输出像素尺度上——输入图上几乎看不出来，VAE 一编码就把它
-    放大成肉眼可见的彩色描边。
+    和 h3._resize 的唯一区别是滤波方式：它写死 lanczos，这里用 area（面积平均）。
+    lanczos 有负瓣，硬边线稿上会留下过冲/下冲；居中裁切后缩放倍率通常接近 1
+    （实测这张图 0.818），那圈振铃正好落在输出像素尺度上——输入图上几乎看不出来
+    （色边 5.89 vs 5.92），VAE 一编码就放大成肉眼可见的彩色描边。
 
-    同一张图、同一 seed、外部预处理成画布尺寸后实测：
-        裁切 + lanczos       成片色边 7.30   首帧偏差 14.65
-        裁切 + 面积平均       成片色边 4.39   首帧偏差  5.27
-        裁切 + 降带宽再lanczos 成片色边 6.79   首帧偏差 14.37   ← 带宽不是原因
-    官方默认的拉伸之所以看着干净（色边 5.07），是因为横向压到 0.667 倍率够小，
-    把振铃一起抹掉了——代价是变形。面积平均两头都不占。
+    同一张图、同一 seed、预处理成画布尺寸后实测：
+        裁切 + lanczos        成片色边 7.30   首帧偏差 14.65
+        裁切 + 面积平均        成片色边 4.39   首帧偏差  5.27
+        裁切 + 降带宽再 lanczos 成片色边 6.79   首帧偏差 14.37   ← 带宽不是原因
+    官方默认的拉伸看着干净（色边 5.07）是因为横向压到 0.667，倍率够小把振铃
+    一起抹掉了——代价是变形。面积平均两头都不占。
     """
-    samples = image[..., :3].movedim(-1, 1).float()      # [B, C, H, W]
+    samples = image[..., :3].movedim(-1, 1)
     _, _, h, w = samples.shape
-    old_aspect, new_aspect = w / h, width / height
-    x = y = 0
-    if old_aspect > new_aspect:
-        x = round((w - w * (new_aspect / old_aspect)) / 2)
-    elif old_aspect < new_aspect:
-        y = round((h - h * (old_aspect / new_aspect)) / 2)
-    if x or y:
-        samples = samples[..., y:h - y, x:w - x]
-
-    _, _, h, w = samples.shape
-    if width <= w and height <= h:
-        # 降采样：面积平均就是正确的低通，没有负瓣
-        out = torch.nn.functional.interpolate(samples, size=(height, width), mode="area")
-    else:
-        # 放大用不了面积平均。bicubic 也有负瓣但比 lanczos 轻，且开抗锯齿
-        out = torch.nn.functional.interpolate(
-            samples, size=(height, width), mode="bicubic",
-            align_corners=False, antialias=True).clamp(0.0, 1.0)
-    return out.movedim(1, -1).to(image.dtype)
+    # area 是降采样滤波，放大时退化成块状。目标比源大就换 bicubic。
+    method = "area" if (width <= w and height <= h) else "bicubic"
+    samples = comfy.utils.common_upscale(samples, width, height, method, crop)
+    return samples.movedim(1, -1)
 
 
 def _empty_image_conditioning(bundle, prompt, width, height, length, first_frame=None, last_frame=None, fit=FIT_CROP):
@@ -573,15 +560,14 @@ def _empty_image_conditioning(bundle, prompt, width, height, length, first_frame
     images = []
     keyframes = []
     if first_frame is not None:
-        # 官方这里写死 "disabled"（纯拉伸），比例对不上人就被压扁。默认改成
-        # 裁切，但不走 h3._resize 的 lanczos —— 见 _fit_no_ringing。
-        image = (h3._resize(first_frame[:1], width, height, "disabled")
-                 if fit == FIT_STRETCH else _fit_no_ringing(first_frame[:1], width, height))
+        # 官方这里写死 "disabled"（纯拉伸），比例对不上人就被压扁
+        image = _fit_keyframe(first_frame[:1], width, height,
+                              "disabled" if fit == FIT_STRETCH else "center")
         images.append(image)
         keyframes.append({"resolved_frame_index": 0, "image": image})
     if last_frame is not None:
-        # 尾帧官方本来就是居中裁切，同样换掉 lanczos
-        image = _fit_no_ringing(last_frame[:1], width, height)
+        # 尾帧官方本来就是居中裁切
+        image = _fit_keyframe(last_frame[:1], width, height, "center")
         images.append(image)
         keyframes.append({"resolved_frame_index": frame_count - 1, "image": image})
 

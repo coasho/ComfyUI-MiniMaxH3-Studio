@@ -530,20 +530,58 @@ def _frame_length(seconds: float, fps: float) -> int:
     return block_count * 17 + 5
 
 
+def _fit_no_ringing(image, width, height):
+    """居中裁切到画布比例，再用面积平均缩放。不变形，也不产生振铃。
+
+    不能用 h3._resize(..., "center")：它固定走 lanczos。lanczos 有负瓣，硬边
+    线稿上会留下过冲/下冲，而居中裁切之后缩放倍率通常接近 1（这里 0.818），
+    那圈振铃正好落在输出像素尺度上——输入图上几乎看不出来，VAE 一编码就把它
+    放大成肉眼可见的彩色描边。
+
+    同一张图、同一 seed、外部预处理成画布尺寸后实测：
+        裁切 + lanczos       成片色边 7.30   首帧偏差 14.65
+        裁切 + 面积平均       成片色边 4.39   首帧偏差  5.27
+        裁切 + 降带宽再lanczos 成片色边 6.79   首帧偏差 14.37   ← 带宽不是原因
+    官方默认的拉伸之所以看着干净（色边 5.07），是因为横向压到 0.667 倍率够小，
+    把振铃一起抹掉了——代价是变形。面积平均两头都不占。
+    """
+    samples = image[..., :3].movedim(-1, 1).float()      # [B, C, H, W]
+    _, _, h, w = samples.shape
+    old_aspect, new_aspect = w / h, width / height
+    x = y = 0
+    if old_aspect > new_aspect:
+        x = round((w - w * (new_aspect / old_aspect)) / 2)
+    elif old_aspect < new_aspect:
+        y = round((h - h * (old_aspect / new_aspect)) / 2)
+    if x or y:
+        samples = samples[..., y:h - y, x:w - x]
+
+    _, _, h, w = samples.shape
+    if width <= w and height <= h:
+        # 降采样：面积平均就是正确的低通，没有负瓣
+        out = torch.nn.functional.interpolate(samples, size=(height, width), mode="area")
+    else:
+        # 放大用不了面积平均。bicubic 也有负瓣但比 lanczos 轻，且开抗锯齿
+        out = torch.nn.functional.interpolate(
+            samples, size=(height, width), mode="bicubic",
+            align_corners=False, antialias=True).clamp(0.0, 1.0)
+    return out.movedim(1, -1).to(image.dtype)
+
+
 def _empty_image_conditioning(bundle, prompt, width, height, length, first_frame=None, last_frame=None, fit=FIT_CROP):
     latent, frame_count = h3._empty_av_latent(width, height, length)
     images = []
     keyframes = []
     if first_frame is not None:
-        # 官方这里写死 "disabled"（纯拉伸）。比例对不上时人就被压扁了，
-        # 而且同一个函数里尾帧用的是 "center"，本身就不自洽。默认改成居中裁切，
-        # 想要官方原始行为把 first_frame_fit 调成 stretch。
-        image = h3._resize(first_frame[:1], width, height,
-                           "disabled" if fit == FIT_STRETCH else "center")
+        # 官方这里写死 "disabled"（纯拉伸），比例对不上人就被压扁。默认改成
+        # 裁切，但不走 h3._resize 的 lanczos —— 见 _fit_no_ringing。
+        image = (h3._resize(first_frame[:1], width, height, "disabled")
+                 if fit == FIT_STRETCH else _fit_no_ringing(first_frame[:1], width, height))
         images.append(image)
         keyframes.append({"resolved_frame_index": 0, "image": image})
     if last_frame is not None:
-        image = h3._resize(last_frame[:1], width, height, "center")
+        # 尾帧官方本来就是居中裁切，同样换掉 lanczos
+        image = _fit_no_ringing(last_frame[:1], width, height)
         images.append(image)
         keyframes.append({"resolved_frame_index": frame_count - 1, "image": image})
 
@@ -666,16 +704,11 @@ class MiniMaxH3Easy:
         # 放 optional 末尾：required 是按位置映射 widget 的，插在中间会把已存
         # 工作流里 ref_image_size 之后的值整体串位。
         optional = {
-            # 默认必须是 stretch。crop 会明显劣化画质：四格交叉实测（冷/热 ×
-            # stretch/crop，同 seed），色边强度 crop 7.30 / stretch 5.07，冷热
-            # 在每格内逐位相同——所以是 crop 干的，跟模型冷启动无关。平涂动画上
-            # 表现为线条带蓝红色边、平涂区起块。原因大概是裁切改变了缩放倍率，
-            # lanczos 的振铃在硬边线稿上没被降采样抹掉，但没有验证。
-            # 比例不匹配请优先用 aspect_ratio=auto：画布跟着图走，两种模式都不动图。
-            "first_frame_fit": ([FIT_STRETCH, FIT_CROP], {"default": FIT_STRETCH,
-                "tooltip": "首帧和画布比例不一致时怎么办。stretch=官方行为，直接拉伸，"
-                           "比例不符会变形但画质干净；crop=居中裁切不变形，但实测会引入"
-                           "色边和块状噪点。想两者都避开，把 aspect_ratio 设成 auto。"}),
+            # crop 走 _fit_no_ringing（面积平均），实测比官方的拉伸还干净：
+            # 色边 4.39 vs 5.07，首帧偏差 5.27 vs 4.93，而且不变形。
+            "first_frame_fit": ([FIT_CROP, FIT_STRETCH], {"default": FIT_CROP,
+                "tooltip": "首帧和画布比例不一致时怎么办。crop=居中裁切（默认），"
+                           "不变形；stretch=官方行为，直接拉伸填满，比例不符会变形。"}),
             "media": ("*",),
         }
         for index in range(1, MAX_MEDIA + 1):

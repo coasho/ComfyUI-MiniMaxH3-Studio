@@ -848,8 +848,76 @@ class MiniMaxH3EasyOutput:
         )
 
 
+class MiniMaxH3AudioOnsetMask:
+    """遮掉片头那一声。只动开头，后面逐样本原样输出。
+
+    H3 经常在第 20 毫秒左右吐出一声人声（有基频、过零率 0.018、频谱重心
+    1.8kHz、峰值撞满刻度），然后转静音，真正的台词晚得多才进来。这是随机的：
+    这台机器 55 段成片里 26 段有。提示词层面压不住——换 seed、换写法、把台词
+    移进时间窗口、删掉所有「不出声」的否定句，都只能让它从「每次都有」降到
+    「时有时无」。社区有同类报告且至今无解（Comfy-Org/ComfyUI#15283，特征同样
+    是「换 seed 有时就没了」）。
+
+    不用 Qwen3TTSAudioPostProcess：它的 target_sample_rate 是必填项，选项只有
+    24000/44100/48000，而 H3 的音轨是 32000Hz——接上去必然重采样，而且它的
+    fade_out 会一并改动结尾。
+
+    这里只做三件事，且都不越界：
+      1. 前 mask_ms 毫秒置零
+      2. 紧接着 fade_ms 毫秒线性淡回原音量
+      3. 之后一个采样点都不碰，采样率和总长度都不变（音画同步不受影响）
+    """
+
+    CATEGORY = "MiniMax H3 Easy"
+    FUNCTION = "apply"
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    DESCRIPTION = "遮掉 H3 片头那一声人声。只处理开头，其余原样输出。"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audio": ("AUDIO",),
+                "mask_ms": ("INT", {"default": 120, "min": 0, "max": 2000, "step": 10,
+                    "display": "slider",
+                    "tooltip": "开头完全静音的长度（毫秒）。实测那一声在 20ms 左右起、"
+                               "约 100ms 长，120 盖得住。设 0 关闭。"}),
+                "fade_ms": ("INT", {"default": 80, "min": 0, "max": 2000, "step": 10,
+                    "display": "slider",
+                    "tooltip": "静音之后淡回原音量的长度（毫秒）。避免在静音末尾出现"
+                               "硬切的咔哒声。"}),
+            },
+        }
+
+    @classmethod
+    def apply(cls, audio, mask_ms, fade_ms):
+        if not isinstance(audio, dict) or "waveform" not in audio:
+            raise ValueError("需要 AUDIO 输入")
+        wave = audio["waveform"]
+        rate = int(audio.get("sample_rate") or 0)
+        if rate <= 0:
+            raise ValueError("AUDIO 缺少 sample_rate")
+
+        total = int(wave.shape[-1])
+        n_mask = min(total, int(rate * max(0, int(mask_ms)) / 1000))
+        n_fade = min(total - n_mask, int(rate * max(0, int(fade_ms)) / 1000))
+        if n_mask <= 0 and n_fade <= 0:
+            return (audio,)
+
+        out = wave.clone()
+        if n_mask > 0:
+            out[..., :n_mask] = 0
+        if n_fade > 0:
+            ramp = torch.linspace(0.0, 1.0, n_fade, dtype=out.dtype, device=out.device)
+            out[..., n_mask:n_mask + n_fade] *= ramp
+        # sample_rate 原样带出去，绝不重采样
+        return ({"waveform": out, "sample_rate": rate},)
+
+
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3EasyLoader": MiniMaxH3EasyLoader,
     "MiniMaxH3Easy": MiniMaxH3Easy,
     "MiniMaxH3EasyOutput": MiniMaxH3EasyOutput,
+    "MiniMaxH3AudioOnsetMask": MiniMaxH3AudioOnsetMask,
 }

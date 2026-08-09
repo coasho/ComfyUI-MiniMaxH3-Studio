@@ -1,15 +1,18 @@
-from .nodes import MiniMaxH3Easy, MiniMaxH3EasyLoader, MiniMaxH3EasyOutput
+from .nodes import (MiniMaxH3Easy, MiniMaxH3EasyLoader, MiniMaxH3EasyOutput,
+                    MiniMaxH3AudioOnsetMask)
 
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3EasyLoader": MiniMaxH3EasyLoader,
     "MiniMaxH3Easy": MiniMaxH3Easy,
     "MiniMaxH3EasyOutput": MiniMaxH3EasyOutput,
+    "MiniMaxH3AudioOnsetMask": MiniMaxH3AudioOnsetMask,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3EasyLoader": "MiniMax H3 Easy Loader",
     "MiniMaxH3Easy": "MiniMax H3 Easy",
     "MiniMaxH3EasyOutput": "MiniMax H3 Easy Output",
+    "MiniMaxH3AudioOnsetMask": "H3 片头人声遮罩",
 }
 
 # 附属节点各自兜住：反推要 transformers / onnxruntime，音色要 ComfyUI-Qwen3-TTS，

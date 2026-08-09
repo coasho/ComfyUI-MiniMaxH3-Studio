@@ -167,6 +167,13 @@ def _idle_loop() -> None:
                 continue
             release_everything(f"空闲 {int(now - idle_since)} 秒")
             idle_since, empty_polls = None, 0
+            # 刹车：放完还在，说明模型卡住了（实测 HostBuffer 崩溃后就是这样），
+            # 再放也没用。不加这个判断会每轮都触发，实测连续空转 110 次 /3 分半，
+            # 每次都带 gc×3 + empty_cache + EmptyWorkingSet，等于持续锤这个进程。
+            if _comfy_models_loaded():
+                print("[MiniMaxH3-Studio] 释放后模型仍在，停止自动释放"
+                      "（重启 ComfyUI 恢复；手动用 /minimax_h3_studio/release_all）")
+                return
         except Exception:
             traceback.print_exc()
             idle_since, empty_polls = None, 0

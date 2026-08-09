@@ -106,6 +106,21 @@ export function prosePieces(script) {
 export const hasCJK = (t) => /[㐀-鿿぀-ヿ가-힯]/.test(String(t || ""));
 
 /**
+ * 去掉「X, NOT Y,」这种颜色围栏。
+ *
+ * 翻译那一趟会给每个颜色补排除项，但「不保留」清单本身就是否定句：
+ * 「不保留 参考图的白色（不是米色）背景」——否定套否定，H3 读不出想要什么。
+ * 这类条目翻完之后要把围栏摘掉。
+ */
+export function stripColourExclusions(text) {
+    return String(text || "")
+        .replace(/,\s*NOT\s+[^,;.]+?,\s*/gi, " ")   // 夹在中间：white, NOT cream, background
+        .replace(/,\s*NOT\s+[^,;.]+$/i, "")         // 收尾：footwear, NOT dark brown
+        .replace(/\s{2,}/g, " ")
+        .trim();
+}
+
+/**
  * 把译文写回一份剧本副本。原剧本保持中文，供继续编辑。
  * map: { 中文原文: English }
  */
@@ -128,7 +143,7 @@ export function applyTranslations(script, map) {
     for (const k of ["summary", "overall_soundscape", "non_diegetic_music"]) {
         if (out.sections) out.sections[k] = T(out.sections[k]);
     }
-    out.notRetained = (out.notRetained || []).map(T);
+    out.notRetained = (out.notRetained || []).map((t) => stripColourExclusions(T(t)));
     for (const cfg of Object.values(out.media || {})) if (cfg) cfg.note = T(cfg.note);
     return out;
 }
@@ -546,7 +561,11 @@ export function assemble(script, mediaTokens = {}) {
     const first = Object.values(plan).find((p) => p.subject === 1);
     let ret = "retention_analysis: " + (keepsUniq.length ? keepsUniq.join("; ")
         : `${first?.label || "<Subject 1>"} fully_preserved`);
-    if (script.notRetained?.length) ret += ". NOT retained: " + script.notRetained.join("; ") + ".";
+    // 老剧本里可能已经把颜色围栏烤进去了，拼装时也摘一遍
+    if (script.notRetained?.length) {
+        ret += ". NOT retained: "
+             + script.notRetained.map(stripColourExclusions).filter(Boolean).join("; ") + ".";
+    }
     S.push(ret);
 
     /* --- detailed_description --- */
@@ -615,11 +634,15 @@ export function assemble(script, mediaTokens = {}) {
     });
     if (body.length) S.push("detailed_description: " + body.join("\n\n"));
 
-    S.push("overall_soundscape: " + (script.sections.overall_soundscape?.trim()
-        ? period(R(script.sections.overall_soundscape.trim())) : "N/A"));
+    // N/A 是官方的占位符，别给它补句号补成「N/A.」
+    const naOr = (v) => {
+        const t = String(v || "").trim();
+        if (!t || /^n\/?a\.?$/i.test(t)) return "N/A";
+        return period(R(t));
+    };
+    S.push("overall_soundscape: " + naOr(script.sections.overall_soundscape));
     // 配乐段之前漏了 R()：面板上写着「可以用 @名字 引用实体」，这里却原样发出去
-    S.push("non_diegetic_music: " + (script.sections.non_diegetic_music?.trim()
-        ? period(R(script.sections.non_diegetic_music.trim())) : "N/A"));
+    S.push("non_diegetic_music: " + naOr(script.sections.non_diegetic_music));
     return S.join("\n\n");
 }
 

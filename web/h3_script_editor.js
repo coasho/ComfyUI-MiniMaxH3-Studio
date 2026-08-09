@@ -701,11 +701,23 @@ export function validate(script, mediaTokens = {}) {
         if (!sh.description?.trim() && !(sh.beats || []).length) {
             out.push(`镜头 ${i + 1} 既没有画面描述也没有变更。`);
         }
-        // @ 引用对不上
+        // @ 引用对不上。第三个参数是本分镜——@台词N 是合法引用，不传就会被
+        // 当成找不到的实体报出来。
         const texts = [sh.description, ...(sh.beats || []).map((b) => b.text)];
         for (const t of texts) {
-            for (const bad of danglingRefs(t, script)) {
-                out.push(`镜头 ${i + 1} 引用了不存在的实体「@${bad}」。`);
+            for (const bad of danglingRefs(t, script, sh)) {
+                // @台词N 单独说：多半是编号超了或那句还是空的，说「不存在的实体」
+                // 会让人去实体面板找半天
+                const m = /^台词(\d+)$/.exec(bad);
+                if (m) {
+                    const n = +m[1];
+                    const total = (sh.lines || []).length;
+                    out.push(n > total
+                        ? `镜头 ${i + 1} 引用了「@${bad}」，但这一镜只有 ${total} 句台词。`
+                        : `镜头 ${i + 1} 引用了「@${bad}」，但第 ${n} 句台词还是空的，先把话写上。`);
+                } else {
+                    out.push(`镜头 ${i + 1} 引用了不存在的实体「@${bad}」。`);
+                }
             }
         }
         // 变更缺角色

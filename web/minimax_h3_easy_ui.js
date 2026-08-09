@@ -1226,6 +1226,18 @@ async function syncPromptFromScript(node, onProgress) {
     const text = assemble(out, tokens);
     const widget = getWidget(node, "prompt");
     if (widget) widget.value = text;
+
+    // 总时长也要落到节点上。分镜的时间码全是按它算的，节点还停在旧的
+    // seconds，出来的片子长度和剧本对不上——时间码就全指错地方了。
+    const secW = getWidget(node, "seconds");
+    if (secW && Number.isFinite(+script.duration)) {
+        const want = Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, +script.duration));
+        if (secW.value !== want) {
+            secW.value = want;
+            secW.callback?.(want);       // 走节点自己的回调，联动别的控件
+        }
+    }
+
     delete node.properties[PROMPT_DOC_PROP];
     if (node.__h3Editor) renderEditorFromNode(node, true);
 
@@ -1308,6 +1320,13 @@ function installScriptEditorButton(node) {
         return n ? `📝 编辑剧本（${n} 镜 · 已接管提示词）` : "📝 编辑剧本（已接管提示词）";
     };
     const w = node.addWidget("button", label(), null, () => {
+        // 还没排过分镜的空剧本，总时长跟节点走；已经排过就以剧本为准，
+        // 否则一打开就把用户排好的时间码顶掉了。
+        const s0 = node.properties[SCRIPT_PROP];
+        const secW0 = getWidget(node, "seconds");
+        if (s0 && !s0.shots?.length && secW0 && Number.isFinite(+secW0.value)) {
+            s0.duration = Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, +secW0.value));
+        }
         // 返回 true = 关闭弹窗；返回字符串 = 保存没生效，弹窗留着并显示这句话
         openScriptModal(node, scriptMediaList(node), async (script, onProgress) => {
             node.properties[SCRIPT_PROP] = script;

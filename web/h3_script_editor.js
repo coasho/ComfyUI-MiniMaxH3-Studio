@@ -367,6 +367,29 @@ function ts(t) {
 // 描述末尾插了台词时会以 </d> 收尾，再补个句号就成了「</d>.」
 const period = (t) => (/[.。!！?？]$|<\/(d|cutoff|scenetrans)>$/.test(t) ? t : t + ".");
 
+/**
+ * 主体定义句：`<Subject 1> is {描述}`。
+ *
+ * 反推出来的描述十有八九以「The character has ...」开头，直接套模板就成了
+ * 「<Subject 1> is The character has ...」——语法崩了，而且 H3 会把它当两个主语读。
+ * 开头是「The/A 某某 has/is/wears」时，把那截换成 <Subject N>，动词留着。
+ */
+const LEAD_NOUN = /^(?:the|a|an)\s+(?:character|subject|figure|person|girl|woman|man|boy|child|image|picture)\s+(has|have|is|are|wears|wearing|shows|features)\s+/i;
+
+export function subjectSentence(label, desc) {
+    const d = String(desc || "").trim();
+    if (!d) return "";
+    const m = LEAD_NOUN.exec(d);
+    if (m) {
+        let verb = m[1].toLowerCase();
+        if (verb === "wearing") verb = "wears";
+        return period(`${label} ${verb} ${d.slice(m[0].length)}`);
+    }
+    // 已经以 is/has 开头的，别再塞一个 is
+    if (/^(is|has|wears|shows)\b/i.test(d)) return period(`${label} ${d}`);
+    return period(`${label} is ${d}`);
+}
+
 function dialogueBody(text, continuity) {
     const t = text.trim();
     if (continuity === "into_next") return `${t} <scenetrans>`;
@@ -457,7 +480,7 @@ export function assemble(script, mediaTokens = {}) {
                 subj.push(`${p.label} is an off-screen voice with no visible presence.`);
             }
         } else if (desc) {
-            subj.push(period(`${p.label} is ${R(desc)}`));
+            subj.push(subjectSentence(p.label, R(desc)));
         }
         // 官方绑定句：一个实体可以被多张图/多段视频分别定义
         for (const b of binds) {
@@ -512,8 +535,16 @@ export function assemble(script, mediaTokens = {}) {
         const lvl = mediaRetention(cfg);
         if (lvl) keeps.push(`${token}: ${lvl}`);
     }
+    // 同一张图被两个实体绑时会重复列，H3 读到两条冲突的保留声明没有意义
+    const seenKeep = new Set();
+    const keepsUniq = keeps.filter((x) => {
+        const tok = x.split(":")[0];
+        if (seenKeep.has(tok)) return false;
+        seenKeep.add(tok);
+        return true;
+    });
     const first = Object.values(plan).find((p) => p.subject === 1);
-    let ret = "retention_analysis: " + (keeps.length ? keeps.join("; ")
+    let ret = "retention_analysis: " + (keepsUniq.length ? keepsUniq.join("; ")
         : `${first?.label || "<Subject 1>"} fully_preserved`);
     if (script.notRetained?.length) ret += ". NOT retained: " + script.notRetained.join("; ") + ".";
     S.push(ret);
@@ -552,13 +583,21 @@ export function assemble(script, mediaTokens = {}) {
         const placed = new Set();
         const putLines = (text) => {
             if (!refs.length) return text;
-            const re = new RegExp("@(" + refs.map((r) => ESC(r.name)).join("|") + ")(?![0-9])", "g");
-            return text.replace(re, (m, name) => {
+            // 字符串里必须写 \\s —— "\s" 在 JS 字符串里等于 "s"，正则会去匹配字母 s
+            const re = new RegExp("\\s*@(" + refs.map((r) => ESC(r.name)).join("|") + ")(?![0-9])\\s*", "g");
+            return text.replace(re, (m, name, off) => {
                 const s2 = sentence.get(name);
                 if (!s2) return m;
                 placed.add(name);
-                return s2;
-            });
+                // 台词句是完整的一句，插进句子中间会串成
+                // 「walks to the right <Subject 1> speaks…, snow keeps falling」。
+                // 前面没断句就补个句号，后面紧跟逗号就把逗号换成句号。
+                const before = text.slice(0, off).trimEnd();
+                const lead = before && !/[.。!！?？:：]$|<\/(d|cutoff|scenetrans)>$/.test(before)
+                    ? ". " : (before ? " " : "");
+                return lead + s2 + " ";
+            }).replace(/(<\/d>)\s*[,，;；]\s*/g, "$1 ")
+              .replace(/\s+/g, " ").trim();
         };
 
         if (sh.description?.trim()) bits.push(period(putLines(R(sh.description.trim()))));
@@ -577,10 +616,10 @@ export function assemble(script, mediaTokens = {}) {
     if (body.length) S.push("detailed_description: " + body.join("\n\n"));
 
     S.push("overall_soundscape: " + (script.sections.overall_soundscape?.trim()
-        ? R(script.sections.overall_soundscape.trim()) : "N/A"));
+        ? period(R(script.sections.overall_soundscape.trim())) : "N/A"));
     // 配乐段之前漏了 R()：面板上写着「可以用 @名字 引用实体」，这里却原样发出去
     S.push("non_diegetic_music: " + (script.sections.non_diegetic_music?.trim()
-        ? R(script.sections.non_diegetic_music.trim()) : "N/A"));
+        ? period(R(script.sections.non_diegetic_music.trim())) : "N/A"));
     return S.join("\n\n");
 }
 
@@ -622,6 +661,25 @@ export function entityProblems(script) {
             if (!k.canSpeak) out.push(`实体「${who}」是「${k.label}」，绑音色通常没意义。`);
         }
     });
+
+    // 两个出镜实体绑同一张参考图 —— 成片里两个角色会长成同一个人。
+    // 下拉框里两张设定稿的名字往往只差几个字，选错了在提示词里也只是
+    // 「都写着 <Picture 2>」，不细看根本发现不了。
+    const byPic = {};
+    for (const e of ents) {
+        if (e.visible === false) continue;
+        for (const b of e.bindings || []) {
+            if (b.mediaKey && b.kind === "identity") {
+                (byPic[b.mediaKey] ||= []).push(e.name?.trim() || "未命名");
+            }
+        }
+    }
+    for (const names of Object.values(byPic)) {
+        if (names.length > 1) {
+            out.push(`${names.join("、")} 的外观绑的是同一张参考图，` +
+                     `成片里他们会长成同一个人。检查一下是不是选错了图。`);
+        }
+    }
 
     const byVoice = {};
     for (const e of ents) if (e.voiceKey) (byVoice[e.voiceKey] ||= []).push(e.name?.trim() || "未命名");

@@ -22,10 +22,17 @@ _patched = False
 _providers = []          # [(名字, 卸载函数)]
 
 # 队列空闲这么久就把 ComfyUI 托管的模型也放掉。0 = 关闭。
-# 默认开着是因为 H3 本体 19.5GB：16GB 卡上跑完不放，显存只剩 1.8GB，
-# 桌面合成和视频硬解都抢不到，播个视频都卡（实测就是这么发生的）。
-# 代价是下次生成要重新读一遍权重，所以窗口给得比较宽，连着跑不会触发。
-IDLE_UNLOAD_SECONDS = float(os.environ.get("MINIMAX_H3_IDLE_UNLOAD", "180"))
+#
+# 30 秒是量出来的，不是拍的。同一份提示词冷跑 / 热跑各一次（5070 Ti 16GB，
+# 640P、4.6 秒、8 步）：
+#     冷跑 84.40s   热跑 80.81s   保留模型只省 3.6s（4.3%）
+# 省的这点全在加载：文本编码器 6.89->5.98s、视频 VAE 0.74->0（已在显存里）、
+# 主模型加载+采样 55.6->54.4s。而代价是空闲时占着 10.8GB 显存、
+# 系统内存只剩 1.29GB —— 拿机器可用性换 4%，不划算。
+#
+# 留 30 秒只是给「看一眼结果马上改参数重跑」留个缓冲。批量跑不受影响：
+# 判据是队列空，排着队就不会触发。
+IDLE_UNLOAD_SECONDS = float(os.environ.get("MINIMAX_H3_IDLE_UNLOAD", "30"))
 _reaper = None
 
 
@@ -125,7 +132,7 @@ def release_everything(reason: str = "") -> dict:
     after = snapshot()
     print(f"[MiniMaxH3-Studio] 已释放全部模型"
           + (f"（{reason}）" if reason else "")
-          + f"：显存 {before.get('vram_gb', '?')} -> {after.get('vram_gb', '?')} GB，"
+          + f"：显存占用 {before.get('vram_used_gb', '?')} -> {after.get('vram_used_gb', '?')} GB，"
             f"进程内存 {before.get('rss_gb', '?')} -> {after.get('rss_gb', '?')} GB")
     return {"before": before, "after": after}
 
@@ -170,7 +177,14 @@ def snapshot() -> dict:
     try:
         import torch
         if torch.cuda.is_available():
-            out["vram_gb"] = round(torch.cuda.memory_reserved() / 2**30, 2)
+            # 不能用 memory_reserved()：这台机器（和任何开了 cudaMallocAsync 的）
+            # 走的不是 torch 的缓存池，实测显存从 13410 掉到 2009 MiB，
+            # memory_reserved() 全程报 0.06 GB —— 日志会睁眼说瞎话。
+            # mem_get_info 问的是驱动，才是真实占用。
+            free_b, total_b = torch.cuda.mem_get_info()
+            out["vram_used_gb"] = round((total_b - free_b) / 2**30, 2)
+            out["vram_free_gb"] = round(free_b / 2**30, 2)
+            out["vram_torch_gb"] = round(torch.cuda.memory_reserved() / 2**30, 2)
     except Exception:
         pass
     try:

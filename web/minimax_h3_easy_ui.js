@@ -3200,17 +3200,28 @@ function pastedMentionCandidates(node) {
 }
 
 function appendPastedText(fragment, text) {
+    // 粘进来的文本里 <d>...</d> 也要变成台词块，和从提示词框渲染时一个待遇。
+    // 之前这里只按换行拆纯文本，于是从外面贴一整份提示词进来，台词全是灰的，
+    // 只有手打的 <d> 才有高亮——而正常用法就是从外面贴。
+    const source = String(text || "");
+    const pattern = /<d>([\s\S]*?)<\/d>/gi;
+    let cursor = 0;
     let last = null;
-    String(text || "").split("\n").forEach((part, index) => {
-        if (index) {
-            last = document.createElement("br");
-            fragment.append(last);
-        }
-        if (part) {
-            last = document.createTextNode(part);
-            fragment.append(last);
-        }
-    });
+    let match;
+    const plain = (chunk) => {
+        String(chunk || "").split("\n").forEach((part, index) => {
+            if (index) fragment.append(last = document.createElement("br"));
+            if (part) fragment.append(last = document.createTextNode(part));
+        });
+    };
+    while ((match = pattern.exec(source))) {
+        plain(source.slice(cursor, match.index));
+        fragment.append(makeCaretSentinel());
+        fragment.append(last = makeDialogueBlock(match[1]));
+        fragment.append(last = makeCaretSentinel());
+        cursor = match.index + match[0].length;
+    }
+    plain(source.slice(cursor));
     return last;
 }
 

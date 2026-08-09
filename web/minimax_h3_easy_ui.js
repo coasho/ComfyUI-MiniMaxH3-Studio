@@ -22,6 +22,7 @@ const REF_IMAGE_2K = "2k";
 const FIT_CROP = "crop";
 const FIT_STRETCH = "stretch";
 const FIT_VALUES = [FIT_CROP, FIT_STRETCH];
+const ASPECT_AUTO = "auto";
 const MAX_MEDIA = 15;
 const MIN_SECONDS = 4;
 const MAX_SECONDS = 20;
@@ -59,6 +60,7 @@ const TEXT = {
     keyframeRole: ZH_BROWSER ? "\u9996\u5c3e\u5e27\u8bbe\u7f6e" : "First/last frame setup",
     refImageSize: ZH_BROWSER ? "\u53c2\u8003\u56fe\u5c3a\u5bf8" : "Reference size",
     referenceMentionMode: ZH_BROWSER ? "@\u5f15\u7528\u65b9\u5f0f" : "@ reference mode",
+    firstFrameFit: ZH_BROWSER ? "\u9996\u5e27\u9002\u914d" : "First-frame fit",
     mentionByFilename: ZH_BROWSER ? "\u6309\u6587\u4ef6\u540d" : "By filename",
     mentionByIndex: ZH_BROWSER ? "\u6309\u5e8f\u53f7" : "By index",
     bundle: ZH_BROWSER ? "H3 \u6a21\u578b\u7ec4\u5408" : "H3 model bundle",
@@ -92,6 +94,10 @@ const OPTION_DEFS = {
     reference_mention_mode: {
         filename: ZH_BROWSER ? "\u6309\u6587\u4ef6\u540d" : "By filename",
         index: ZH_BROWSER ? "\u6309\u5e8f\u53f7" : "By index",
+    },
+    first_frame_fit: {
+        [FIT_CROP]: ZH_BROWSER ? "\u88c1\u5207\uff08\u4e0d\u53d8\u5f62\uff09" : "Crop (no distortion)",
+        [FIT_STRETCH]: ZH_BROWSER ? "\u62c9\u4f38\uff08\u4f1a\u53d8\u5f62\uff09" : "Stretch (distorts)",
     },
     resolution: {
         "360P": "360P",
@@ -153,7 +159,40 @@ const OPTION_ALIASES = {
         "\u6309\u5e8f\u53f7": "index",
         "By index": "index",
     },
+    // OPTION_DEFS \u53ea\u88c5\u5f53\u524d\u8bed\u8a00\u7684\u6807\u7b7e\uff0c\u4e2d\u82f1\u5207\u6362\u540e\u8001\u5de5\u4f5c\u6d41\u9760\u8fd9\u5f20\u8868\u8bfb\u56de\u6765
+    first_frame_fit: {
+        [FIT_CROP]: FIT_CROP,
+        "\u88c1\u5207\uff08\u4e0d\u53d8\u5f62\uff09": FIT_CROP,
+        "Crop (no distortion)": FIT_CROP,
+        [FIT_STRETCH]: FIT_STRETCH,
+        "\u62c9\u4f38\uff08\u4f1a\u53d8\u5f62\uff09": FIT_STRETCH,
+        "Stretch (distorts)": FIT_STRETCH,
+    },
 };
+// widgets_values 的唯一契约：就是这 13 格，顺序写死，读写都按名字来。
+//
+// 不能靠 litegraph 的 widgets 顺序：节点内的提示词编辑器是个 DOM widget，
+// ensurePromptEditor 会把它插到 prompt 后面（index 2）。虽然那儿标了
+// serialize=false，1.48 的前端照样给它留一个 null —— 于是 resolution 之后
+// 每一格都往后串一位，first_frame_fit 接住上一格的标签，后端报"输入值不可用"。
+// 而且这个 DOM widget 只在节点真的画出来时才挂上（走 requestAnimationFrame），
+// 所以同一份工作流"看过"和"没看过"存出来的格数还不一样。
+const WIDGET_DEFAULTS = {
+    mode: MODE_IMAGE,
+    prompt: "",
+    resolution: "480P",
+    aspect_ratio: ASPECT_AUTO,
+    width: 1344,
+    height: 768,
+    seconds: 5,
+    advanced: false,
+    fps: 24,
+    keyframe_role: KEYFRAME_FIRST,
+    ref_image_size: REF_IMAGE_1K,
+    reference_mention_mode: "index",
+    first_frame_fit: FIT_CROP,
+};
+const WIDGET_ORDER = Object.keys(WIDGET_DEFAULTS);
 const COLOR_IMAGE = "#5aa9f0";
 const COLOR_LINK_BORDER = "rgba(0,0,0,0.5)";
 const COMFY_NATIVE_LINK_COLOR = "#9A9";
@@ -258,7 +297,7 @@ function localizeNodeInstance(node) {
     }
     if (!isTarget(node)) return;
     node.title = TEXT.mainTitle;
-    const labels = { mode: TEXT.mode, prompt: TEXT.prompt, resolution: TEXT.resolution, aspect_ratio: TEXT.aspectRatio, width: TEXT.width, height: TEXT.height, seconds: TEXT.seconds, advanced: TEXT.advanced, fps: TEXT.fps, keyframe_role: TEXT.keyframeRole, ref_image_size: TEXT.refImageSize, reference_mention_mode: TEXT.referenceMentionMode };
+    const labels = { mode: TEXT.mode, prompt: TEXT.prompt, resolution: TEXT.resolution, aspect_ratio: TEXT.aspectRatio, width: TEXT.width, height: TEXT.height, seconds: TEXT.seconds, advanced: TEXT.advanced, fps: TEXT.fps, keyframe_role: TEXT.keyframeRole, ref_image_size: TEXT.refImageSize, reference_mention_mode: TEXT.referenceMentionMode, first_frame_fit: TEXT.firstFrameFit };
     for (const widget of node.widgets || []) {
         if (labels[widget.name]) widget.label = labels[widget.name];
         localizeComboWidget(widget);
@@ -1446,8 +1485,8 @@ function patchGraphToPrompt() {
             promptNode.inputs.keyframe_role = canonicalOption("keyframe_role", getWidgetValue(node, "keyframe_role", KEYFRAME_FIRST));
             promptNode.inputs.ref_image_size = canonicalOption("ref_image_size", getWidgetValue(node, "ref_image_size", REF_IMAGE_1K));
             promptNode.inputs.reference_mention_mode = canonicalOption("reference_mention_mode", getWidgetValue(node, "reference_mention_mode", "index"));
-            promptNode.inputs.first_frame_fit = FIT_VALUES.includes(String(getWidgetValue(node, "first_frame_fit", FIT_CROP)))
-                ? String(getWidgetValue(node, "first_frame_fit", FIT_CROP)) : FIT_CROP;
+            const fit = canonicalOption("first_frame_fit", getWidgetValue(node, "first_frame_fit", FIT_CROP));
+            promptNode.inputs.first_frame_fit = FIT_VALUES.includes(fit) ? fit : FIT_CROP;
             // 按钮不是输入项，别塞进 payload
             for (const widget of node.widgets || []) {
                 if (widget?.type === "button") delete promptNode.inputs[widget.name];
@@ -3736,22 +3775,8 @@ function repairConfiguredWidgetValues(node, info) {
     const raw = Array.isArray(info?.widgets_values) ? [...info.widgets_values] : [];
     if (!raw.length) return;
 
-    const defaults = {
-        mode: MODE_IMAGE,
-        prompt: "",
-        resolution: "480P",
-        aspect_ratio: "16:9",
-        width: 1344,
-        height: 768,
-        seconds: 5,
-        advanced: false,
-        fps: 24,
-        keyframe_role: KEYFRAME_FIRST,
-        ref_image_size: REF_IMAGE_1K,
-        reference_mention_mode: "index",
-        first_frame_fit: FIT_CROP,
-    };
-    const names = Object.keys(defaults);
+    const defaults = WIDGET_DEFAULTS;
+    const names = WIDGET_ORDER;
     const values = raw;
     const resolutionAt = canonicalOption("resolution", values[2]);
     const nextResolution = canonicalOption("resolution", values[3]);
@@ -3780,10 +3805,10 @@ function repairConfiguredWidgetValues(node, info) {
             ? canonicalOption("ref_image_size", values[10]) : defaults.ref_image_size,
         reference_mention_mode: Object.prototype.hasOwnProperty.call(OPTION_DEFS.reference_mention_mode, canonicalOption("reference_mention_mode", values[11]))
             ? canonicalOption("reference_mention_mode", values[11]) : defaults.reference_mention_mode,
-        // first_frame_fit 没有翻译表，串位时会接住上一格的中文标签（"按文件名"），
-        // 后端一看不是 crop/stretch 就直接报"输入值不可用"。这里兜底成默认值。
-        first_frame_fit: FIT_VALUES.includes(String(values[12]))
-            ? String(values[12]) : defaults.first_frame_fit,
+        // 串位时这一格会接住上一格的标签（"按文件名"），后端一看不是 crop/stretch
+        // 就直接报"输入值不可用"。这里兜底成默认值。
+        first_frame_fit: FIT_VALUES.includes(canonicalOption("first_frame_fit", values[12]))
+            ? canonicalOption("first_frame_fit", values[12]) : defaults.first_frame_fit,
     };
     for (const name of names) setConfiguredWidgetValue(node, name, normalized[name]);
     info.widgets_values = names.map((name) => normalized[name]);
@@ -3886,15 +3911,14 @@ function installNode(nodeType, nodeData) {
             info.properties ||= {};
             info.properties[PROMPT_DOC_PROP] = this.properties[PROMPT_DOC_PROP];
         }
-        // 存盘只写后端认的原值，不写界面上的中文标签。标签一旦串位落进没有翻译表
-        // 的组合框，重开就是非法值（first_frame_fit 就是这么被写成"按文件名"的），
-        // 而且带中文的工作流拿到英文界面上也读不回来。
-        const values = info?.widgets_values;
-        const serializable = (this.widgets || []).filter((w) => w?.type !== "button");
-        if (Array.isArray(values) && values.length === serializable.length) {
-            serializable.forEach((widget, index) => {
-                const name = String(widget?.name || "");
-                if (OPTION_DEFS[name]) values[index] = canonicalOption(name, values[index]);
+        // 按名字重拼，不用 litegraph 排的顺序（见 WIDGET_DEFAULTS 上面那段）。
+        // 顺带把界面上的中文标签还原成后端原值：标签落进没有翻译表的组合框就再
+        // 也读不回来，带中文的工作流拿到英文界面上同样废掉。
+        if (info) {
+            info.widgets_values = WIDGET_ORDER.map((name) => {
+                const raw = getWidget(this, name)?.value;
+                if (raw === undefined || raw === null) return WIDGET_DEFAULTS[name];
+                return OPTION_DEFS[name] ? canonicalOption(name, raw) : raw;
             });
         }
         return result;

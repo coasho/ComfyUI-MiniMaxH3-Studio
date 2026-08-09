@@ -19,6 +19,9 @@ const KEYFRAME_FIRST = "first";
 const RESOLUTION_CUSTOM = "custom";
 const REF_IMAGE_1K = "1k";
 const REF_IMAGE_2K = "2k";
+const FIT_CROP = "crop";
+const FIT_STRETCH = "stretch";
+const FIT_VALUES = [FIT_CROP, FIT_STRETCH];
 const MAX_MEDIA = 15;
 const MIN_SECONDS = 4;
 const MAX_SECONDS = 20;
@@ -105,6 +108,7 @@ const OPTION_DEFS = {
         [RESOLUTION_CUSTOM]: "Custom",
     },
     aspect_ratio: {
+        auto: ZH_BROWSER ? "自动（跟随图片）" : "Auto (follow image)",
         "1:1": "1:1",
         "2:3": "2:3",
         "3:2": "3:2",
@@ -214,7 +218,14 @@ function localizeComboWidget(widget) {
     const current = canonicalOption(name, widget.value);
     widget.__h3OptionName = name;
     widget.options ||= {};
-    widget.options.values = Object.values(definition);
+    // 以后端给的列表为准：认识的换成本地化标签，不认识的原样保留。
+    // 之前直接 Object.values(definition) 覆盖，后端新增的选项（aspect_ratio 的
+    // auto 就是这么丢的）在界面上根本不出现，用户永远选不到。
+    const backend = Array.isArray(widget.options.values) ? widget.options.values : [];
+    const localized = backend.length
+        ? backend.map((v) => definition[canonicalOption(name, v)] ?? v)
+        : Object.values(definition);
+    widget.options.values = [...new Set(localized)];
     widget.value = definition[current] ?? widget.value;
 }
 
@@ -1435,6 +1446,12 @@ function patchGraphToPrompt() {
             promptNode.inputs.keyframe_role = canonicalOption("keyframe_role", getWidgetValue(node, "keyframe_role", KEYFRAME_FIRST));
             promptNode.inputs.ref_image_size = canonicalOption("ref_image_size", getWidgetValue(node, "ref_image_size", REF_IMAGE_1K));
             promptNode.inputs.reference_mention_mode = canonicalOption("reference_mention_mode", getWidgetValue(node, "reference_mention_mode", "index"));
+            promptNode.inputs.first_frame_fit = FIT_VALUES.includes(String(getWidgetValue(node, "first_frame_fit", FIT_CROP)))
+                ? String(getWidgetValue(node, "first_frame_fit", FIT_CROP)) : FIT_CROP;
+            // 按钮不是输入项，别塞进 payload
+            for (const widget of node.widgets || []) {
+                if (widget?.type === "button") delete promptNode.inputs[widget.name];
+            }
         }
         return promptData;
     };
@@ -3731,7 +3748,8 @@ function repairConfiguredWidgetValues(node, info) {
         fps: 24,
         keyframe_role: KEYFRAME_FIRST,
         ref_image_size: REF_IMAGE_1K,
-                reference_mention_mode: "index",
+        reference_mention_mode: "index",
+        first_frame_fit: FIT_CROP,
     };
     const names = Object.keys(defaults);
     const values = raw;
@@ -3762,6 +3780,10 @@ function repairConfiguredWidgetValues(node, info) {
             ? canonicalOption("ref_image_size", values[10]) : defaults.ref_image_size,
         reference_mention_mode: Object.prototype.hasOwnProperty.call(OPTION_DEFS.reference_mention_mode, canonicalOption("reference_mention_mode", values[11]))
             ? canonicalOption("reference_mention_mode", values[11]) : defaults.reference_mention_mode,
+        // first_frame_fit 没有翻译表，串位时会接住上一格的中文标签（"按文件名"），
+        // 后端一看不是 crop/stretch 就直接报"输入值不可用"。这里兜底成默认值。
+        first_frame_fit: FIT_VALUES.includes(String(values[12]))
+            ? String(values[12]) : defaults.first_frame_fit,
     };
     for (const name of names) setConfiguredWidgetValue(node, name, normalized[name]);
     info.widgets_values = names.map((name) => normalized[name]);
@@ -3863,6 +3885,17 @@ function installNode(nodeType, nodeData) {
         if (info && this.properties?.[PROMPT_DOC_PROP]) {
             info.properties ||= {};
             info.properties[PROMPT_DOC_PROP] = this.properties[PROMPT_DOC_PROP];
+        }
+        // 存盘只写后端认的原值，不写界面上的中文标签。标签一旦串位落进没有翻译表
+        // 的组合框，重开就是非法值（first_frame_fit 就是这么被写成"按文件名"的），
+        // 而且带中文的工作流拿到英文界面上也读不回来。
+        const values = info?.widgets_values;
+        const serializable = (this.widgets || []).filter((w) => w?.type !== "button");
+        if (Array.isArray(values) && values.length === serializable.length) {
+            serializable.forEach((widget, index) => {
+                const name = String(widget?.name || "");
+                if (OPTION_DEFS[name]) values[index] = canonicalOption(name, values[index]);
+            });
         }
         return result;
     };

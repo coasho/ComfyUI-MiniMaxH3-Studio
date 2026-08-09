@@ -883,17 +883,17 @@
       "widgets_values": [
         "image",
         "subject_definitions: <Subject 1> is a young woman in a plain grey hoodie, shoulder-length dark brown hair (NOT black, NOT auburn), calm brown eyes.\n\nsummary: A single fifteen-second take. <Subject 1> sits at a rain-streaked window, notices something outside, and says one quiet line. Calm, unhurried, almost no camera movement.\n\ndetailed_description: A small cafe window at dusk, rain running down the glass, warm lamplight inside. <Subject 1> sits with both hands around a mug, looking out. The camera pushes in with small amplitude at slow speed. She turns slightly toward the glass, and her lips move clearly and visibly on every syllable as she speaks in a low, unhurried voice. <d>[English]It stopped raining on the other side.</d>\n\noverall_soundscape: Steady rain on glass, a low room tone, the faint clink of a spoon, all mixed well below the dialogue.\n\nnon_diegetic_music: A sparse piano figure at low volume, entering after the line and never covering the voice.",
-        null,
         "540P",
-        "16:9",
+        "auto",
         1344,
         768,
-        15,
+        15.0,
         true,
-        24,
+        24.0,
         "first",
         "2k",
-        "filename"
+        "filename",
+        "crop"
       ]
     }
   ],

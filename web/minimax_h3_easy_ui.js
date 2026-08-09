@@ -1194,7 +1194,18 @@ function buildRuntimePrompt(node, runtimeLinks) {
                 && String(link.media_type || "image").toLowerCase() === mediaType
             );
         }
-        if (index >= 0) return `${RUNTIME_REF_PREFIX}${index + 1}__`;
+        // 占位符只有参考模式的后端会解析（_resolve_reference_prompt 只在那条
+        // 路径上调用）。图生模式必须直接写出 <Picture N>，否则模型收到的是
+        // __MINIMAX_H3_REF_1__ 这串字面量，首帧引用整个失效——实测就是这样
+        // 出现的「又变糊了」（00057 写 <Picture 1> 干净，00058 写占位符糊）。
+        if (index >= 0) {
+            if (!isReferenceMode(node)) {
+                const n = mediaType === "video" ? "Video" : mediaType === "audio" ? "Audio" : "Picture";
+                return `<${n} ${runtimeLinks.slice(0, index + 1)
+                    .filter((l) => String(l.media_type || "image").toLowerCase() === mediaType).length}>`;
+            }
+            return `${RUNTIME_REF_PREFIX}${index + 1}__`;
+        }
         if (!isReferenceMode(node)) return String(part.token || "");
         return `${UNRESOLVED_REF_PREFIX}${mediaType}__`;
     }).join("");

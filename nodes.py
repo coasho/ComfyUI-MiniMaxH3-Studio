@@ -666,9 +666,16 @@ class MiniMaxH3Easy:
         # 放 optional 末尾：required 是按位置映射 widget 的，插在中间会把已存
         # 工作流里 ref_image_size 之后的值整体串位。
         optional = {
-            "first_frame_fit": ([FIT_CROP, FIT_STRETCH], {"default": FIT_CROP,
-                "tooltip": "首帧和画布比例不一致时怎么办。crop=保持比例居中裁切（默认，"
-                           "任何图都不会变形）；stretch=官方原始行为，直接拉伸，会变形。"}),
+            # 默认必须是 stretch。crop 会明显劣化画质：四格交叉实测（冷/热 ×
+            # stretch/crop，同 seed），色边强度 crop 7.30 / stretch 5.07，冷热
+            # 在每格内逐位相同——所以是 crop 干的，跟模型冷启动无关。平涂动画上
+            # 表现为线条带蓝红色边、平涂区起块。原因大概是裁切改变了缩放倍率，
+            # lanczos 的振铃在硬边线稿上没被降采样抹掉，但没有验证。
+            # 比例不匹配请优先用 aspect_ratio=auto：画布跟着图走，两种模式都不动图。
+            "first_frame_fit": ([FIT_STRETCH, FIT_CROP], {"default": FIT_STRETCH,
+                "tooltip": "首帧和画布比例不一致时怎么办。stretch=官方行为，直接拉伸，"
+                           "比例不符会变形但画质干净；crop=居中裁切不变形，但实测会引入"
+                           "色边和块状噪点。想两者都避开，把 aspect_ratio 设成 auto。"}),
             "media": ("*",),
         }
         for index in range(1, MAX_MEDIA + 1):

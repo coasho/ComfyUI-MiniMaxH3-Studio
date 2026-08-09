@@ -21,18 +21,19 @@ import traceback
 _patched = False
 _providers = []          # [(名字, 卸载函数)]
 
-# 队列空闲这么久就把 ComfyUI 托管的模型也放掉。0 = 关闭。
+# 队列一空就把 ComfyUI 托管的模型放掉。默认 0 = 立刻放，不等。
+# 设成负数或 "off" 关闭；设成正数则等这么多秒。
 #
-# 30 秒是量出来的，不是拍的。同一份提示词冷跑 / 热跑各一次（5070 Ti 16GB，
-# 640P、4.6 秒、8 步）：
-#     冷跑 84.40s   热跑 80.81s   保留模型只省 3.6s（4.3%）
-# 省的这点全在加载：文本编码器 6.89->5.98s、视频 VAE 0.74->0（已在显存里）、
-# 主模型加载+采样 55.6->54.4s。而代价是空闲时占着 10.8GB 显存、
-# 系统内存只剩 1.29GB —— 拿机器可用性换 4%，不划算。
+# 默认为什么是 0：保留模型的收益实测只有 3.6 秒。同一份提示词冷跑 / 热跑
+# 各一次（5070 Ti 16GB，640P、4.6 秒、8 步）：
+#     冷跑 84.40s   热跑 80.81s   差 3.6s（4.3%）
+# 而不放的代价是空闲时占着 10.8GB 显存、系统内存只剩 1.29GB，机器没法用。
+# 拿 3.6 秒换「生成完还要卡几分钟」是荒谬的交换，所以不设延迟。
 #
-# 留 30 秒只是给「看一眼结果马上改参数重跑」留个缓冲。批量跑不受影响：
-# 判据是队列空，排着队就不会触发。
-IDLE_UNLOAD_SECONDS = float(os.environ.get("MINIMAX_H3_IDLE_UNLOAD", "30"))
+# 批量跑不受影响：判据是队列空，排着队就不会触发。
+_raw = os.environ.get("MINIMAX_H3_IDLE_UNLOAD", "0").strip().lower()
+IDLE_UNLOAD_SECONDS = -1.0 if _raw in ("off", "no", "false") else float(_raw)
+IDLE_UNLOAD_ENABLED = IDLE_UNLOAD_SECONDS >= 0
 _reaper = None
 
 
@@ -140,21 +141,19 @@ def release_everything(reason: str = "") -> dict:
 def _idle_loop() -> None:
     idle_since = None
     while True:
-        time.sleep(5)
+        # 1 秒一轮，因为默认是「队列一空立刻放」，轮询间隔就是用户感知到的延迟
+        time.sleep(1)
         try:
-            if _queue_busy():
-                idle_since = None
-                continue
-            if not _comfy_models_loaded():
+            if _queue_busy() or not _comfy_models_loaded():
                 idle_since = None
                 continue
             now = time.time()
             if idle_since is None:
                 idle_since = now
-                continue
             if now - idle_since < IDLE_UNLOAD_SECONDS:
                 continue
-            release_everything(f"空闲 {int(IDLE_UNLOAD_SECONDS)} 秒")
+            release_everything("队列已空" if IDLE_UNLOAD_SECONDS <= 0
+                               else f"空闲 {int(IDLE_UNLOAD_SECONDS)} 秒")
             idle_since = None
         except Exception:
             traceback.print_exc()
@@ -163,12 +162,13 @@ def _idle_loop() -> None:
 
 def start_idle_reaper() -> None:
     global _reaper
-    if _reaper is not None or IDLE_UNLOAD_SECONDS <= 0:
+    if _reaper is not None or not IDLE_UNLOAD_ENABLED:
         return
     _reaper = threading.Thread(target=_idle_loop, name="h3-idle-unload", daemon=True)
     _reaper.start()
-    print(f"[MiniMaxH3-Studio] 空闲 {int(IDLE_UNLOAD_SECONDS)} 秒自动释放模型"
-          f"（改 MINIMAX_H3_IDLE_UNLOAD 环境变量，0 关闭）")
+    when = "队列一空立刻" if IDLE_UNLOAD_SECONDS <= 0 else f"空闲 {int(IDLE_UNLOAD_SECONDS)} 秒后"
+    print(f"[MiniMaxH3-Studio] {when}释放模型"
+          f"（MINIMAX_H3_IDLE_UNLOAD=秒数改延迟，=off 关闭）")
 
 
 def snapshot() -> dict:

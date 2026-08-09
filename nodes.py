@@ -49,6 +49,8 @@ RESOLUTION_CUSTOM = "custom"
 ASPECT_AUTO = "auto"
 FIT_CROP = "crop"
 FIT_STRETCH = "stretch"
+MODE_FILL = "fill"
+MODE_SILENCE = "silence"
 ASPECT_SQUARE = "1:1"
 ASPECT_PHOTO_PORTRAIT = "2:3"
 ASPECT_PHOTO = "3:2"
@@ -872,7 +874,10 @@ class MiniMaxH3AudioOnsetMask:
     FUNCTION = "apply"
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("audio",)
-    DESCRIPTION = "遮掉 H3 片头那一声人声。只处理开头，其余原样输出。"
+    DESCRIPTION = ("把片头 N 毫秒整体静音，用来盖掉 H3 那一声随机人声。"
+                   "注意是整体静音，不是只去人声——挑不出人声。默认 120ms 里"
+                   "除了那一声本来没有别的（环境音和配乐 0.9s 后才起），"
+                   "但滑条推太高会开始吃掉环境音。")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -881,17 +886,23 @@ class MiniMaxH3AudioOnsetMask:
                 "audio": ("AUDIO",),
                 "mask_ms": ("INT", {"default": 120, "min": 0, "max": 2000, "step": 10,
                     "display": "slider",
-                    "tooltip": "开头完全静音的长度（毫秒）。实测那一声在 20ms 左右起、"
-                               "约 100ms 长，120 盖得住。设 0 关闭。"}),
+                    "tooltip": "开头完全静音的长度（毫秒）。这一段是整体静音，"
+                               "不区分人声和环境音。实测那一声在 20ms 起、约 100ms 长，"
+                               "120 盖得住；环境音和配乐 0.9s 后才起，所以 120 不会误伤。"
+                               "推到 900 以上会开始吃环境音。设 0 关闭。"}),
                 "fade_ms": ("INT", {"default": 80, "min": 0, "max": 2000, "step": 10,
                     "display": "slider",
-                    "tooltip": "静音之后淡回原音量的长度（毫秒）。避免在静音末尾出现"
-                               "硬切的咔哒声。"}),
+                    "tooltip": "接缝交叉淡化的长度（毫秒）。填补模式下用于把填充段和"
+                               "原音接平；静音模式下用于淡回原音量。"}),
+                "mode": ([MODE_FILL, MODE_SILENCE], {"default": MODE_FILL,
+                    "tooltip": "fill=用后面的环境音倒放补上（默认）。多段视频拼接时"
+                               "接缝不会断音。silence=直接静音，简单但每段片头都缺一块，"
+                               "拼起来每个接缝都会听到一次掉音。"}),
             },
         }
 
     @classmethod
-    def apply(cls, audio, mask_ms, fade_ms):
+    def apply(cls, audio, mask_ms, fade_ms, mode=MODE_FILL):
         if not isinstance(audio, dict) or "waveform" not in audio:
             raise ValueError("需要 AUDIO 输入")
         wave = audio["waveform"]
@@ -901,18 +912,81 @@ class MiniMaxH3AudioOnsetMask:
 
         total = int(wave.shape[-1])
         n_mask = min(total, int(rate * max(0, int(mask_ms)) / 1000))
-        n_fade = min(total - n_mask, int(rate * max(0, int(fade_ms)) / 1000))
-        if n_mask <= 0 and n_fade <= 0:
+        n_fade = min(max(0, total - n_mask), int(rate * max(0, int(fade_ms)) / 1000))
+        if n_mask <= 0:
             return (audio,)
 
         out = wave.clone()
-        if n_mask > 0:
+
+        if mode == MODE_SILENCE:
             out[..., :n_mask] = 0
-        if n_fade > 0:
-            ramp = torch.linspace(0.0, 1.0, n_fade, dtype=out.dtype, device=out.device)
-            out[..., n_mask:n_mask + n_fade] *= ramp
+            if n_fade > 0:
+                ramp = torch.linspace(0.0, 1.0, n_fade, dtype=out.dtype, device=out.device)
+                out[..., n_mask:n_mask + n_fade] *= ramp
+            return ({"waveform": out, "sample_rate": rate},)
+
+        # 填补模式：拿遮罩区之后等长的一段环境音倒放填进来。
+        # 直接静音的话，每段片头都缺 120ms，多段拼接时每个接缝都会断一次音。
+        # 倒放是音频修复的常规做法——房间音倒过来听不出循环，而正放会让
+        # 同一串脚步/衣料声在 0.2 秒内重复两遍，很明显。
+        src = wave[..., n_mask:n_mask + n_mask]
+        if src.shape[-1] < n_mask:                      # 素材不够长就退回静音
+            out[..., :n_mask] = 0
+        else:
+            out[..., :n_mask] = torch.flip(src, dims=(-1,))
+            # 接缝处交叉淡化，避免填充段和原音在 n_mask 处硬拼出咔哒声
+            n_x = min(n_fade or int(rate * 0.02), n_mask, max(0, total - n_mask))
+            if n_x > 0:
+                ramp = torch.linspace(0.0, 1.0, n_x, dtype=out.dtype, device=out.device)
+                head = out[..., n_mask - n_x:n_mask]     # 填充段的尾巴
+                tail = wave[..., n_mask:n_mask + n_x]    # 原音的开头
+                out[..., n_mask - n_x:n_mask] = head * (1 - ramp) + tail.flip(-1) * ramp
         # sample_rate 原样带出去，绝不重采样
         return ({"waveform": out, "sample_rate": rate},)
+
+
+class MiniMaxH3StepFrames:
+    """二拍/三拍作画：每张画面保持 N 帧，把连续插值变成阶梯运动。
+
+    「像 Live2D」的根子不在画风，在运动本身：H3 输出 24fps，每一帧都是新插值
+    出来的，帧间永远平滑过渡。传统动画是一张原画停 2~3 帧（二拍每秒 12 张、
+    三拍每秒 8 张），运动是阶梯状的——这是最主要的辨识特征，靠提示词措辞求不来。
+
+    这里只重排帧索引，不改画面内容、不改总帧数（音画同步不受影响）：
+        step=1  原样
+        step=2  二拍，等效每秒 12 张
+        step=3  三拍，等效每秒 8 张
+
+    注意它只改运动节奏，不会让线条变成手绘质感——那是画风层面的事。
+    """
+
+    CATEGORY = "MiniMax H3 Easy"
+    FUNCTION = "apply"
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    DESCRIPTION = "二拍/三拍作画：每张画面保持 N 帧，把 24fps 的连续插值变成传统动画的阶梯运动。"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "step": ("INT", {"default": 2, "min": 1, "max": 4, "step": 1,
+                    "display": "slider",
+                    "tooltip": "每张画面保持几帧。1=关闭（24fps 原样）；"
+                               "2=二拍，等效每秒 12 张，日常电视动画最常见；"
+                               "3=三拍，等效每秒 8 张，更强的顿挫感；4=更慢。"}),
+            },
+        }
+
+    @classmethod
+    def apply(cls, images, step):
+        step = max(1, int(step))
+        if step == 1 or images.shape[0] <= 1:
+            return (images,)
+        count = int(images.shape[0])
+        index = torch.arange(count, device=images.device) // step * step
+        return (images[index.clamp(max=count - 1)],)
 
 
 NODE_CLASS_MAPPINGS = {
@@ -920,4 +994,5 @@ NODE_CLASS_MAPPINGS = {
     "MiniMaxH3Easy": MiniMaxH3Easy,
     "MiniMaxH3EasyOutput": MiniMaxH3EasyOutput,
     "MiniMaxH3AudioOnsetMask": MiniMaxH3AudioOnsetMask,
+    "MiniMaxH3StepFrames": MiniMaxH3StepFrames,
 }

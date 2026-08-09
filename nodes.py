@@ -663,7 +663,14 @@ class MiniMaxH3Easy:
 
     @classmethod
     def INPUT_TYPES(cls):
-        optional = {"media": ("*",)}
+        # 放 optional 末尾：required 是按位置映射 widget 的，插在中间会把已存
+        # 工作流里 ref_image_size 之后的值整体串位。
+        optional = {
+            "first_frame_fit": ([FIT_CROP, FIT_STRETCH], {"default": FIT_CROP,
+                "tooltip": "首帧和画布比例不一致时怎么办。crop=保持比例居中裁切（默认，"
+                           "任何图都不会变形）；stretch=官方原始行为，直接拉伸，会变形。"}),
+            "media": ("*",),
+        }
         for index in range(1, MAX_MEDIA + 1):
             optional[f"media_{index}"] = ("*",)
             optional[f"media_type_{index}"] = ("STRING", {"default": ""})
@@ -681,9 +688,6 @@ class MiniMaxH3Easy:
                 "advanced": ("BOOLEAN", {"default": False}),
                 "fps": ("FLOAT", {"default": 24.0, "min": 1.0, "max": 120.0, "step": 1.0}),
                 "keyframe_role": ([KEYFRAME_FIRST, KEYFRAME_LAST], {"default": KEYFRAME_FIRST}),
-                "first_frame_fit": ([FIT_CROP, FIT_STRETCH], {"default": FIT_CROP,
-                    "tooltip": "首帧和画布比例不一致时怎么办。crop=保持比例居中裁切（默认，"
-                               "任何图都不会变形）；stretch=官方原始行为，直接拉伸填满，会变形。"}),
                 "ref_image_size": ([REF_IMAGE_1K, REF_IMAGE_2K], {"default": REF_IMAGE_1K}),
                 "reference_mention_mode": ([REFERENCE_MENTION_FILENAME, REFERENCE_MENTION_INDEX], {"default": REFERENCE_MENTION_INDEX}),
             },

@@ -31,9 +31,17 @@ _providers = []          # [(名字, 卸载函数)]
 # 拿 3.6 秒换「生成完还要卡几分钟」是荒谬的交换，所以不设延迟。
 #
 # 批量跑不受影响：判据是队列空，排着队就不会触发。
-_raw = os.environ.get("MINIMAX_H3_IDLE_UNLOAD", "0").strip().lower()
+_raw = os.environ.get("MINIMAX_H3_IDLE_UNLOAD", "off").strip().lower()
 IDLE_UNLOAD_SECONDS = -1.0 if _raw in ("off", "no", "false") else float(_raw)
 IDLE_UNLOAD_ENABLED = IDLE_UNLOAD_SECONDS >= 0
+# 队列判据有竞态：上一个任务结束、下一个还没登记成「运行中」的那一瞬间，
+# 队列看起来是空的。在那个窗口里调 unload_all_models() + EmptyWorkingSet，
+# 会打断正在建 pinned host buffer 的 pin_memory，实测炸出
+#     RuntimeError: HostBuffer.truncate failed   （comfy_aimdo/host_buffer.py:122）
+# 那次生成 2.11 秒就废了。延迟设成 0、轮询 1 秒时最容易撞上。
+# 所以默认关闭；开启时也要求连续 MIN_EMPTY_POLLS 次都空才动手。
+MIN_EMPTY_POLLS = 3
+POLL_SECONDS = 2.0
 _reaper = None
 
 
@@ -140,24 +148,28 @@ def release_everything(reason: str = "") -> dict:
 
 def _idle_loop() -> None:
     idle_since = None
+    empty_polls = 0
     while True:
-        # 1 秒一轮，因为默认是「队列一空立刻放」，轮询间隔就是用户感知到的延迟
-        time.sleep(1)
+        time.sleep(POLL_SECONDS)
         try:
             if _queue_busy() or not _comfy_models_loaded():
-                idle_since = None
+                idle_since, empty_polls = None, 0
                 continue
+            empty_polls += 1
             now = time.time()
             if idle_since is None:
                 idle_since = now
-            if now - idle_since < IDLE_UNLOAD_SECONDS:
+            if empty_polls < MIN_EMPTY_POLLS or now - idle_since < IDLE_UNLOAD_SECONDS:
                 continue
-            release_everything("队列已空" if IDLE_UNLOAD_SECONDS <= 0
-                               else f"空闲 {int(IDLE_UNLOAD_SECONDS)} 秒")
-            idle_since = None
+            # 动手前最后再确认一次：轮询到这里之间可能已经有新任务进来了
+            if _queue_busy():
+                idle_since, empty_polls = None, 0
+                continue
+            release_everything(f"空闲 {int(now - idle_since)} 秒")
+            idle_since, empty_polls = None, 0
         except Exception:
             traceback.print_exc()
-            idle_since = None
+            idle_since, empty_polls = None, 0
 
 
 def start_idle_reaper() -> None:

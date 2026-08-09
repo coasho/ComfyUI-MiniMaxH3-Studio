@@ -38,6 +38,13 @@ pip install -r ComfyUI-MiniMaxH3-Studio/requirements.txt
 MiniMax-H3 音画流采样（`ModelSamplingAV`）；在此之前用 4 步 Turbo LoRA，声音会严重破音。
 示例工作流是按 Turbo LoRA 配的。
 
+随包用的是 **`minimax_h3_turbo_v4_step600_ema`**——作者称它是这条线上最强的一版：
+静态与小幅运动的镜头明显更好，脸、手指、细纹理这些微观细节也更好，而且没有 v1 那种
+过锐的塑料感。可用区间 **4–8 步，6–8 步明显好于 4 步**，超过 8 步不再变好还会过锐。
+示例按 6 步、调度器 `simple`、强度 `1.0` 配。
+旧版 `ckpt850` 唯一还占优的场景是「只跑 4 步且画面大幅运动」——v4 那时会拖影，
+但把步数提到 6–8 才是正解。
+
 音色生成还需要另外装 [ComfyUI-Qwen3-TTS](https://github.com/lrzjason/ComfyUI-Qwen3-TTS)，
 本包驱动的是它的 TTS 节点类。
 
@@ -68,7 +75,8 @@ python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --requir
 | `h3_text_encoder` | ✔ | 14.6 GB | `models/text_encoders/` |
 | `h3_text_encoder_int8` | — | 25.3 GB | 非 50 系显卡的备选 |
 | `h3_vae` | ✔ | 5.4 GB | `models/vae/`（视频 + 音频两个）|
-| `h3_turbo_lora` | ✔ | 592 MB | `models/loras/` |
+| `h3_turbo_lora` | ✔ | 592 MB | `models/loras/` —— v4-600 EMA，作者推荐 |
+| `h3_turbo_lora_ckpt850` | — | 592 MB | 旧版，只在「4 步 + 大幅运动」时占优 |
 | `qwen3vl_caption` | — | 8.3 GB | `models/LLM/Qwen3-VL-4B-Instruct/` |
 | `wd14_tagger` | — | 1.2 GB | 装了 `comfyui-wd14-tagger` 就复用它的 models 目录 |
 | `tts_voicedesign` | — | 4.2 GB | `models/TTS/Qwen/…-VoiceDesign/` |
@@ -97,16 +105,15 @@ python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --requir
 | `MiniMax_H3_Studio_Reference.json` | 参考生视频 | `h3_ref2va` + 文本编码器 + VAE + Turbo LoRA |
 | `MiniMax_H3_Studio_TextToVideo.json` | 文生视频 | `h3_fl2va` + 文本编码器 + VAE + Turbo LoRA |
 | `Image_to_Prompt_Bilingual.json` | 图生文反推，不出视频 | `qwen3vl_caption`（二次元再加 `wd14_tagger`）|
-| `MiniMax_H3_Caption_Bilingual.json` | 图生文反推，不出视频 | `qwen3vl_caption`（二次元再加 `wd14_tagger`）|
 
 两张视频图都预置了一小段演示剧本，打开编辑器看到的是填好的结构而不是空表单，
 参考图指向 ComfyUI 自带的 `input/example.png`，换成你自己的设定稿即可。
 
-**`MiniMax_H3_Caption_Bilingual.json`** 是单独的反推图：一张图进去，四份文本出来——
-英文（进提示词）、中文（给你核对）、WD14 标签、设定稿版式特征（丢进「不保留」）。
-中文是**从英文译出来的**、不是分别写两遍：两份必须说的是同一件事，否则你核对中文
-没问题就发货，实际发出去的英文可能说了别的。跑完自动把 8.3GB 的 VLM 放掉，
-要连着批量跑就把 `unload_after` 关掉。
+**`Image_to_Prompt_Bilingual.json`** 是单独的反推图：一张图进去，五份文本出来——
+自然语言和逗号标签各出中英两份，外加 WD14 原始标签。四路各有开关，因为每开一路
+就多跑一趟模型。中文是**从英文译出来的**、不是分别写两遍：两份必须说的是同一件事，
+否则你核对中文没问题就发货，实际发出去的英文可能说了别的。跑完自动把 8.3GB 的
+VLM 放掉，要连着批量跑就把 `unload_after` 关掉。
 
 ---
 

@@ -332,7 +332,7 @@
         "cnr_id": "comfy-core"
       },
       "widgets_values": [
-        "minimax_h3_turbo_4step_ckpt850_pruned_comfyui.safetensors",
+        "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
         1
       ]
     },
@@ -583,7 +583,7 @@
       },
       "widgets_values": [
         "simple",
-        10,
+        6,
         1
       ]
     },

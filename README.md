@@ -41,6 +41,14 @@ a package is missing, that feature reports it and the nodes keep working.
 native MiniMax-H3 AV flow sampling (`ModelSamplingAV`); before it, the 4-step Turbo LoRA
 produced badly clipped audio. The example workflows are built around the Turbo LoRA.
 
+The shipped LoRA is **`minimax_h3_turbo_v4_step600_ema`**, which its author calls the
+strongest checkpoint of the line — better static and small-motion shots, better faces,
+fingers and fine texture, and none of the over-sharpening of the v1 checkpoints. Useful
+range is **4–8 steps; 6–8 look noticeably better than 4**, and past 8 it stops helping and
+starts over-sharpening. The examples ship at 6 steps, scheduler `simple`, strength `1.0`.
+The one case where the older `ckpt850` still wins is 4 steps *and* heavy motion, where v4
+can smear; going to 6–8 steps fixes that instead.
+
 Voice generation additionally needs [ComfyUI-Qwen3-TTS](https://github.com/lrzjason/ComfyUI-Qwen3-TTS)
 installed alongside this package — it owns the TTS node classes this editor drives.
 
@@ -72,7 +80,8 @@ python ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Studio/download_models.py --requir
 | `h3_text_encoder` | ✔ | 14.6 GB | `models/text_encoders/` |
 | `h3_text_encoder_int8` | — | 25.3 GB | alternative for pre-Blackwell GPUs |
 | `h3_vae` | ✔ | 5.4 GB | `models/vae/` (video + audio VAE) |
-| `h3_turbo_lora` | ✔ | 592 MB | `models/loras/` |
+| `h3_turbo_lora` | ✔ | 592 MB | `models/loras/` — v4-600 EMA, the author's pick |
+| `h3_turbo_lora_ckpt850` | — | 592 MB | legacy, only better at 4 steps **and** heavy motion |
 | `qwen3vl_caption` | — | 8.3 GB | `models/LLM/Qwen3-VL-4B-Instruct/` |
 | `wd14_tagger` | — | 1.2 GB | reuses `comfyui-wd14-tagger/models/` if installed |
 | `tts_voicedesign` | — | 4.2 GB | `models/TTS/Qwen/…-VoiceDesign/` |
@@ -104,19 +113,18 @@ package's own nodes** — no KJNodes, no wavespeed, no patched samplers.
 | `MiniMax_H3_Studio_Reference.json` | reference-to-video | `h3_ref2va` + text encoder + VAEs + Turbo LoRA |
 | `MiniMax_H3_Studio_TextToVideo.json` | text-to-video | `h3_fl2va` + text encoder + VAEs + Turbo LoRA |
 | `Image_to_Prompt_Bilingual.json` | image → prompt, no video | `qwen3vl_caption` (+ `wd14_tagger` for anime) |
-| `MiniMax_H3_Caption_Bilingual.json` | image → text, no video | `qwen3vl_caption` (+ `wd14_tagger` for anime) |
 
 The two video graphs come with a short demo script already loaded, so opening the editor
 shows a filled-in structure rather than a blank form. They point at `input/example.png`,
 which ships with ComfyUI; swap in your own reference sheet.
 
-**`MiniMax_H3_Caption_Bilingual.json`** is the standalone captioning graph: one image in,
-four texts out — English (goes into the prompt), Chinese (for you to proofread against),
-WD14 tags, and character-sheet artifacts to drop into "not retained". The Chinese is
-translated *from the English*, not written separately, so the two always say the same
-thing — otherwise you would proofread the Chinese and ship an English that says something
-else. It unloads the 8.3 GB VLM when it finishes; turn `unload_after` off if you are
-running it in a loop.
+**`Image_to_Prompt_Bilingual.json`** is the standalone captioning graph: one image in,
+five texts out — natural language and comma-separated tags, each in English and Chinese,
+plus the raw WD14 tags. Each of the four is behind its own switch, since every one you
+turn on costs another model pass. The Chinese is translated *from the English*, not
+written separately, so the two always say the same thing — otherwise you would proofread
+the Chinese and ship an English that says something else. It unloads the 8.3 GB VLM when
+it finishes; turn `unload_after` off if you are running it in a loop.
 
 ---
 

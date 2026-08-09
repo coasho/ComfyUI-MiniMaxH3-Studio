@@ -172,11 +172,24 @@ MANIFEST: list[dict] = [
     },
     {
         "id": "h3_turbo_lora",
-        "label": "Turbo 4 步 LoRA（ckpt850）",
-        "label_en": "Turbo 4-step LoRA (ckpt850)",
+        "label": "Turbo 加速 LoRA（v4-600 EMA，作者推荐）",
+        "label_en": "Turbo LoRA — v4 step600 EMA (author's pick)",
         "group": "核心",
         "required": True,
-        "note": "示例工作流按 10 步配的，靠它。需要 ComfyUI ≥ bdcb886，否则声音会破。",
+        "note": "4–8 步出片，6–8 步明显好于 4 步。静态与小幅运动、脸手细节都比旧版强。"
+                "需要 ComfyUI ≥ bdcb886，否则声音会破。",
+        "files": [{"repo": LORA_REPO, "path": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+                   "dest": "loras/minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+                   "size": 620285592}],
+    },
+    {
+        "id": "h3_turbo_lora_ckpt850",
+        "label": "Turbo 加速 LoRA · 旧版 ckpt850（大幅运动 + 只跑 4 步时用）",
+        "label_en": "Turbo LoRA — legacy ckpt850 (4 steps + heavy motion)",
+        "group": "核心",
+        "required": False,
+        "note": "v4-600 在「只有 4 步且画面大幅运动」时会拖影，这是它唯一还占优的场景。"
+                "能跑到 6–8 步就不需要这个。",
         "files": [{"repo": LORA_REPO, "path": "minimax_h3_turbo_4step_ckpt850_pruned_comfyui.safetensors",
                    "dest": "loras/minimax_h3_turbo_4step_ckpt850_pruned_comfyui.safetensors",
                    "size": 620285592}],

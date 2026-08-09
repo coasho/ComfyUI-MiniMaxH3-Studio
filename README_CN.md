@@ -243,6 +243,34 @@ For the target video, at 0.00 seconds into the target video, <Picture 1> (from [
 > 卸载时**绝不** `.to("cpu")`。那会把 8GB 权重从显存搬进内存然后留在那里
 > （实测 RSS 0.83 → 7.63 GB），反过来把 ComfyUI 自己饿死。
 
+### 跑完自动释放（默认开）
+
+ComfyUI 默认跑完把模型留在显存里，图的是下次快。但 H3 本体 19.5 GB，
+**16 GB 卡上跑完不放，显存只剩 1.8 GB** —— 桌面合成、浏览器、视频硬解全抢不到，
+播个视频都卡。实测一台 5070 Ti + 31 GB 内存的机器，生成结束后仍被占着
+14.1 GB 显存 + 17.4 GB 内存。
+
+所以队列空闲 **180 秒**后自动把全部模型（含 ComfyUI 托管的）放掉：
+
+```
+显存  14147 -> 2592 MiB   （回收 11.6 GB）
+内存  空闲 4.13 -> 20.38 GB（进程 RSS 17.44 -> 1.95 GB）
+```
+
+窗口给得宽，连着跑不会触发。改 `MINIMAX_H3_IDLE_UNLOAD` 环境变量调整秒数，
+设 `0` 关闭。想立刻放：
+
+```bash
+curl -X POST http://127.0.0.1:8000/minimax_h3_studio/release_all
+```
+
+队列非空时这个接口返回 409 不动手。ComfyUI 自带的 `POST /free`
+（`{"unload_models":true,"free_memory":true}`）效果相同，只是不含本包的辅助模型。
+
+> 如果**生成过程中**也卡，那是另一回事：加启动参数 `--reserve-vram 1.5`
+> 给系统留出显存。代价是 H3 可用显存更少、offload 更频繁、生成更慢，
+> 按需要取舍。
+
 ---
 
 ## 六、文件

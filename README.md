@@ -271,6 +271,36 @@ Measured peaks on a 16 GB card: captioning 8.78 GB, voice 4.09 GB.
 > Unloading **never** does `.to("cpu")`. That moves 8 GB of weights from VRAM into RAM and
 > leaves them there (measured RSS 0.83 → 7.63 GB), starving ComfyUI itself instead.
 
+### Idle auto-release (on by default)
+
+ComfyUI keeps models resident after a run so the next one is fast. But H3 itself is 19.5 GB,
+and **on a 16 GB card that leaves 1.8 GB of VRAM free** — the desktop compositor, the browser
+and hardware video decode all fight over the scraps, and even playing a video stutters.
+Measured on a 5070 Ti with 31 GB RAM: 14.1 GB VRAM and 17.4 GB RAM still held after the
+generation had finished.
+
+So once the queue has been empty for **180 seconds**, everything is released, including
+ComfyUI-managed models:
+
+```
+VRAM  14147 -> 2592 MiB    (11.6 GB recovered)
+RAM   4.13 -> 20.38 GB free (process RSS 17.44 -> 1.95 GB)
+```
+
+The window is deliberately wide, so back-to-back runs never trigger it. Set
+`MINIMAX_H3_IDLE_UNLOAD` to change the delay, or `0` to disable. To release right now:
+
+```bash
+curl -X POST http://127.0.0.1:8000/minimax_h3_studio/release_all
+```
+
+It returns 409 and does nothing while the queue is busy. ComfyUI's own `POST /free`
+(`{"unload_models":true,"free_memory":true}`) does the same minus this pack's companion models.
+
+> If it also stutters *during* generation, that is a different problem: add the launch
+> argument `--reserve-vram 1.5` to keep VRAM aside for the OS. The cost is less VRAM for H3,
+> more offloading, and slower generation — your call.
+
 ---
 
 ## 6. Files

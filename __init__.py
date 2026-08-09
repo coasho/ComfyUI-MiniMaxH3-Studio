@@ -33,6 +33,7 @@ try:
     from . import vram
     vram.install()
     vram.register_routes()
+    vram.start_idle_reaper()
 except Exception:  # pragma: no cover
     import traceback
     print("[MiniMaxH3-Studio] 显存调度接入失败：")

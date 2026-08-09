@@ -13,10 +13,20 @@ MiniMaxH3EasyLoader 跑在它前面，加载 H3 大模型那一刻我们还没�
 
 from __future__ import annotations
 
+import os
+import threading
+import time
 import traceback
 
 _patched = False
 _providers = []          # [(名字, 卸载函数)]
+
+# 队列空闲这么久就把 ComfyUI 托管的模型也放掉。0 = 关闭。
+# 默认开着是因为 H3 本体 19.5GB：16GB 卡上跑完不放，显存只剩 1.8GB，
+# 桌面合成和视频硬解都抢不到，播个视频都卡（实测就是这么发生的）。
+# 代价是下次生成要重新读一遍权重，所以窗口给得比较宽，连着跑不会触发。
+IDLE_UNLOAD_SECONDS = float(os.environ.get("MINIMAX_H3_IDLE_UNLOAD", "180"))
+_reaper = None
 
 
 def register(name: str, unload_fn) -> None:
@@ -75,6 +85,85 @@ def release_all(reason: str = "") -> int:
     return freed
 
 
+def _queue_busy() -> bool:
+    """队列里还有没有在跑或排队的活。取不到状态时一律当忙，宁可不放。"""
+    try:
+        from server import PromptServer
+        queue = getattr(PromptServer.instance, "prompt_queue", None)
+        if queue is None:
+            return True
+        running, pending = queue.get_current_queue()
+        return bool(running or pending)
+    except Exception:
+        return True
+
+
+def _comfy_models_loaded() -> bool:
+    try:
+        import comfy.model_management as mm
+        return bool(getattr(mm, "current_loaded_models", None))
+    except Exception:
+        return False
+
+
+def release_everything(reason: str = "") -> dict:
+    """本包的辅助模型 + ComfyUI 托管的模型，一起放掉。"""
+    before = snapshot()
+    for name, fn in _providers:
+        try:
+            fn()
+        except Exception:
+            traceback.print_exc()
+    try:
+        import comfy.model_management as mm
+        # unload_all_models 会转调被我们包过的 free_memory，那层只管辅助模型，
+        # 不会递归回到这里
+        mm.unload_all_models()
+    except Exception:
+        traceback.print_exc()
+    _hard_collect()
+    after = snapshot()
+    print(f"[MiniMaxH3-Studio] 已释放全部模型"
+          + (f"（{reason}）" if reason else "")
+          + f"：显存 {before.get('vram_gb', '?')} -> {after.get('vram_gb', '?')} GB，"
+            f"进程内存 {before.get('rss_gb', '?')} -> {after.get('rss_gb', '?')} GB")
+    return {"before": before, "after": after}
+
+
+def _idle_loop() -> None:
+    idle_since = None
+    while True:
+        time.sleep(5)
+        try:
+            if _queue_busy():
+                idle_since = None
+                continue
+            if not _comfy_models_loaded():
+                idle_since = None
+                continue
+            now = time.time()
+            if idle_since is None:
+                idle_since = now
+                continue
+            if now - idle_since < IDLE_UNLOAD_SECONDS:
+                continue
+            release_everything(f"空闲 {int(IDLE_UNLOAD_SECONDS)} 秒")
+            idle_since = None
+        except Exception:
+            traceback.print_exc()
+            idle_since = None
+
+
+def start_idle_reaper() -> None:
+    global _reaper
+    if _reaper is not None or IDLE_UNLOAD_SECONDS <= 0:
+        return
+    _reaper = threading.Thread(target=_idle_loop, name="h3-idle-unload", daemon=True)
+    _reaper.start()
+    print(f"[MiniMaxH3-Studio] 空闲 {int(IDLE_UNLOAD_SECONDS)} 秒自动释放模型"
+          f"（改 MINIMAX_H3_IDLE_UNLOAD 环境变量，0 关闭）")
+
+
 def snapshot() -> dict:
     """当前显存/内存占用，用来给前端显示释放了多少。"""
     out = {}
@@ -99,10 +188,18 @@ def add_routes(routes) -> None:
     @routes.post("/minimax_h3_studio/release")
     async def _release(_r):
         before = snapshot()
-        n = release_all("编辑器请求释放")
+        n = release_all("界面请求释放")
         after = snapshot()
         return web.json_response({"ok": True, "released": n,
                                   "before": before, "after": after})
+
+    @routes.post("/minimax_h3_studio/release_all")
+    async def _release_all(_r):
+        """连 ComfyUI 托管的模型一起放。跑完想立刻用电脑就打这个。"""
+        if _queue_busy():
+            return web.json_response({"ok": False, "error": "队列还在跑，没有释放"},
+                                     status=409)
+        return web.json_response({"ok": True, **release_everything("手动请求")})
 
 
 def register_routes() -> None:

@@ -1322,7 +1322,8 @@ function truncateMentionLabel(value, maxLength = 22) {
 }
 
 function mentionOptions(node) {
-    if (!isReferenceMode(node)) return [];
+    // 图生模式的首/尾帧同样是 <Picture 1>/<Picture 2>：core 的 tokenizer
+    // 对 fl2va 就是拼 "<Picture N>: " + 视觉块，所以引用在这个模式下成立。
     const links = normalizeLinks(node);
     const mediaOrder = { image: 0, video: 1, audio: 2 };
     const orderedLinks = links
@@ -1403,10 +1404,6 @@ function refreshMentionPreviews() {
     for (const node of app.graph?._nodes || []) {
         if (!isTarget(node)) continue;
         normalizeLinks(node);
-        if (!isReferenceMode(node)) {
-            closeMentionMenu(node);
-            continue;
-        }
         const options = mentionOptions(node);
         const currentMode = referenceMentionMode(node);
         for (const chip of node.__h3Editor?.querySelectorAll?.(".h3-mention-chip") || []) {
@@ -2423,10 +2420,6 @@ function renderMentionMenu(node) {
 }
 
 function openMentionMenu(node, editor) {
-    if (!isReferenceMode(node)) {
-        closeMentionMenu(node);
-        return false;
-    }
     const mention = getMentionRange(editor);
     if (!mention) {
         closeMentionMenu(node);
@@ -2454,7 +2447,7 @@ function openMentionMenu(node, editor) {
 }
 
 function syncMentionMenuToCaret(node, editor) {
-    if (!isReferenceMode(node) || !getMentionRange(editor)) {
+    if (!getMentionRange(editor)) {
         closeMentionMenu(node);
         return false;
     }
@@ -2777,7 +2770,10 @@ function syncEditorMode(node) {
     wrap.style.display = "block";
     editor.dataset.placeholder = reference ? TEXT.referencePromptPlaceholder : TEXT.promptPlaceholder;
     applyNativeEditorTheme(wrap);
-    if (!reference) closeMentionMenu(node);
+    // 这里原本 if (!reference) closeMentionMenu(node)。syncModeWidgets 挂在
+    // onDrawForeground 上，画布每帧重绘都跑一次，于是图生模式下菜单刚弹出来
+    // 就被下一帧关掉——表现为「按 @ 列表一闪就没」。关菜单该由光标位置决定，
+    // 不该由模式决定。
 }
 
 function handleMentionMenuKeydown(node, event) {
@@ -3172,7 +3168,6 @@ function insertPlainText(editor, text) {
 }
 
 function pastedMentionCandidates(node) {
-    if (!isReferenceMode(node)) return [];
     const labels = {
         image: ["图片", "Image", "image", "Picture", "picture"],
         video: ["视频", "Video", "video"],
@@ -3184,6 +3179,10 @@ function pastedMentionCandidates(node) {
         const aliases = new Set();
         if (option.fullLabel) aliases.add(`@${option.fullLabel}`);
         if (option.token) aliases.add(option.token);
+        // <Picture 1> 这种官方写法在 option.tag 里，之前只匹配 token（值是
+        // @文件名）和 @前缀N，所以从外面贴一整份提示词进来，<Picture 1> 永远
+        // 不变芯片——而提示词里用的正是这个写法。
+        if (option.tag) aliases.add(option.tag);
         for (const prefix of labels[option.type] || []) {
             aliases.add(`@${prefix}${option.ordinal}`);
             aliases.add(`@${prefix} ${option.ordinal}`);
@@ -3302,7 +3301,7 @@ function ensurePromptEditor(node) {
             pushPromptHistory(node);
             return;
         }
-        if (isReferenceMode(node) && event.data === "@") setTimeout(() => syncMentionMenuToCaret(node, editor), 0);
+        if (event.data === "@") setTimeout(() => syncMentionMenuToCaret(node, editor), 0);
     });
     editor.addEventListener("input", (event) => {
         syncPromptFromEditor(node);
@@ -3332,7 +3331,7 @@ function ensurePromptEditor(node) {
         activePromptNode = node;
     }, true);
     editor.addEventListener("keyup", (event) => {
-        if (!isReferenceMode(node) || ["ArrowUp", "ArrowDown", "Enter", "Escape", "Tab"].includes(event.key)) return;
+        if (["ArrowUp", "ArrowDown", "Enter", "Escape", "Tab"].includes(event.key)) return;
         syncMentionMenuToCaret(node, editor);
         event.stopPropagation();
     });

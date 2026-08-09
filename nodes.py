@@ -945,54 +945,9 @@ class MiniMaxH3AudioOnsetMask:
         return ({"waveform": out, "sample_rate": rate},)
 
 
-class MiniMaxH3StepFrames:
-    """二拍/三拍作画：每张画面保持 N 帧，把连续插值变成阶梯运动。
-
-    「像 Live2D」的根子不在画风，在运动本身：H3 输出 24fps，每一帧都是新插值
-    出来的，帧间永远平滑过渡。传统动画是一张原画停 2~3 帧（二拍每秒 12 张、
-    三拍每秒 8 张），运动是阶梯状的——这是最主要的辨识特征，靠提示词措辞求不来。
-
-    这里只重排帧索引，不改画面内容、不改总帧数（音画同步不受影响）：
-        step=1  原样
-        step=2  二拍，等效每秒 12 张
-        step=3  三拍，等效每秒 8 张
-
-    注意它只改运动节奏，不会让线条变成手绘质感——那是画风层面的事。
-    """
-
-    CATEGORY = "MiniMax H3 Easy"
-    FUNCTION = "apply"
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("images",)
-    DESCRIPTION = "二拍/三拍作画：每张画面保持 N 帧，把 24fps 的连续插值变成传统动画的阶梯运动。"
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "images": ("IMAGE",),
-                "step": ("INT", {"default": 2, "min": 1, "max": 4, "step": 1,
-                    "display": "slider",
-                    "tooltip": "每张画面保持几帧。1=关闭（24fps 原样）；"
-                               "2=二拍，等效每秒 12 张，日常电视动画最常见；"
-                               "3=三拍，等效每秒 8 张，更强的顿挫感；4=更慢。"}),
-            },
-        }
-
-    @classmethod
-    def apply(cls, images, step):
-        step = max(1, int(step))
-        if step == 1 or images.shape[0] <= 1:
-            return (images,)
-        count = int(images.shape[0])
-        index = torch.arange(count, device=images.device) // step * step
-        return (images[index.clamp(max=count - 1)],)
-
-
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3EasyLoader": MiniMaxH3EasyLoader,
     "MiniMaxH3Easy": MiniMaxH3Easy,
     "MiniMaxH3EasyOutput": MiniMaxH3EasyOutput,
     "MiniMaxH3AudioOnsetMask": MiniMaxH3AudioOnsetMask,
-    "MiniMaxH3StepFrames": MiniMaxH3StepFrames,
 }

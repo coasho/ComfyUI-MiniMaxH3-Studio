@@ -46,6 +46,9 @@ RESOLUTION_928 = "928P"
 RESOLUTION_1024 = "1024P"
 RESOLUTION_1080 = "1080P"
 RESOLUTION_CUSTOM = "custom"
+ASPECT_AUTO = "auto"
+FIT_CROP = "crop"
+FIT_STRETCH = "stretch"
 ASPECT_SQUARE = "1:1"
 ASPECT_PHOTO_PORTRAIT = "2:3"
 ASPECT_PHOTO = "3:2"
@@ -491,6 +494,25 @@ def _align_canvas_dimension(value: float) -> int:
     return max(h3.CANVAS_MULTIPLE, round(float(value) / h3.CANVAS_MULTIPLE) * h3.CANVAS_MULTIPLE)
 
 
+def _nearest_aspect(image) -> str:
+    """
+    按图片的真实长宽比挑一个最接近的官方比例。
+
+    首帧是「几何锚点」，官方直接把它拉伸填满画布（core 的注释原话是
+    geometry anchor: plain stretch to canvas）。所以画布比例和图不一致时，
+    人物必然被压扁或拉长。auto 就是把这一步自动做对：先挑最接近的比例，
+    余下的零头再由 first_frame_fit=crop 居中裁掉，两步之后无论什么图都不变形。
+    """
+    try:
+        h, w = int(image.shape[1]), int(image.shape[2])
+        if h <= 0 or w <= 0:
+            return ASPECT_WIDESCREEN
+        src = w / h
+    except Exception:
+        return ASPECT_WIDESCREEN
+    return min(ASPECT_RATIOS, key=lambda k: abs(ASPECT_RATIOS[k][0] / ASPECT_RATIOS[k][1] - src))
+
+
 def _canvas_dimensions(resolution: str, aspect_ratio: str, custom_width: int, custom_height: int) -> tuple[int, int]:
     if str(resolution) == RESOLUTION_CUSTOM:
         return _align_canvas_dimension(custom_width), _align_canvas_dimension(custom_height)
@@ -508,12 +530,16 @@ def _frame_length(seconds: float, fps: float) -> int:
     return block_count * 17 + 5
 
 
-def _empty_image_conditioning(bundle, prompt, width, height, length, first_frame=None, last_frame=None):
+def _empty_image_conditioning(bundle, prompt, width, height, length, first_frame=None, last_frame=None, fit=FIT_CROP):
     latent, frame_count = h3._empty_av_latent(width, height, length)
     images = []
     keyframes = []
     if first_frame is not None:
-        image = h3._resize(first_frame[:1], width, height, "disabled")
+        # 官方这里写死 "disabled"（纯拉伸）。比例对不上时人就被压扁了，
+        # 而且同一个函数里尾帧用的是 "center"，本身就不自洽。默认改成居中裁切，
+        # 想要官方原始行为把 first_frame_fit 调成 stretch。
+        image = h3._resize(first_frame[:1], width, height,
+                           "disabled" if fit == FIT_STRETCH else "center")
         images.append(image)
         keyframes.append({"resolved_frame_index": 0, "image": image})
     if last_frame is not None:
@@ -647,13 +673,17 @@ class MiniMaxH3Easy:
                 "mode": ([MODE_IMAGE, MODE_REFERENCE], {"default": MODE_IMAGE}),
                 "prompt": ("STRING", {"multiline": True, "dynamicPrompts": True, "default": ""}),
                 "resolution": (list(RESOLUTIONS), {"default": RESOLUTION_480}),
-                "aspect_ratio": (list(ASPECT_RATIOS), {"default": ASPECT_WIDESCREEN}),
+                "aspect_ratio": ([ASPECT_AUTO, *ASPECT_RATIOS], {"default": ASPECT_AUTO,
+                    "tooltip": "auto = 按首帧/第一张参考图挑最接近的官方比例，最省裁剪。"}),
                 "width": ("INT", {"default": 1344, "min": 32, "max": nodes.MAX_RESOLUTION, "step": 32}),
                 "height": ("INT", {"default": 768, "min": 32, "max": nodes.MAX_RESOLUTION, "step": 32}),
                 "seconds": ("FLOAT", {"default": 5.0, "min": MIN_SECONDS, "max": MAX_SECONDS, "step": 1.0}),
                 "advanced": ("BOOLEAN", {"default": False}),
                 "fps": ("FLOAT", {"default": 24.0, "min": 1.0, "max": 120.0, "step": 1.0}),
                 "keyframe_role": ([KEYFRAME_FIRST, KEYFRAME_LAST], {"default": KEYFRAME_FIRST}),
+                "first_frame_fit": ([FIT_CROP, FIT_STRETCH], {"default": FIT_CROP,
+                    "tooltip": "首帧和画布比例不一致时怎么办。crop=保持比例居中裁切（默认，"
+                               "任何图都不会变形）；stretch=官方原始行为，直接拉伸填满，会变形。"}),
                 "ref_image_size": ([REF_IMAGE_1K, REF_IMAGE_2K], {"default": REF_IMAGE_1K}),
                 "reference_mention_mode": ([REFERENCE_MENTION_FILENAME, REFERENCE_MENTION_INDEX], {"default": REFERENCE_MENTION_INDEX}),
             },
@@ -697,7 +727,7 @@ class MiniMaxH3Easy:
         return images[0], images[1]
 
     @classmethod
-    def generate(cls, h3_bundle, mode, prompt, resolution, aspect_ratio, width, height, seconds, advanced, fps, keyframe_role, ref_image_size, reference_mention_mode, **kwargs):
+    def generate(cls, h3_bundle, mode, prompt, resolution, aspect_ratio, width, height, seconds, advanced, fps, keyframe_role, ref_image_size, reference_mention_mode, first_frame_fit=FIT_CROP, **kwargs):
         if not isinstance(h3_bundle, MiniMaxH3Bundle):
             raise ValueError("Connect a MiniMax H3 Easy Loader bundle")
         # 反推的 VLM 8.4GB、音色模型 4GB，跟 H3 抢显存必爆。
@@ -710,10 +740,14 @@ class MiniMaxH3Easy:
             pass
         mode = str(mode)
         keyframe_role = KEYFRAME_LAST if str(keyframe_role) == KEYFRAME_LAST else KEYFRAME_FIRST
-        width, height = _canvas_dimensions(resolution, aspect_ratio, width, height)
         seconds = min(MAX_SECONDS, max(MIN_SECONDS, float(seconds)))
         length = _frame_length(seconds, fps)
         items = cls._collect_media(kwargs)
+        # auto：拿第一张图的真实比例去挑官方比例，挑完再算画布
+        if str(aspect_ratio) == ASPECT_AUTO:
+            ref = next((it.value for it in items if it.media_type == "image"), None)
+            aspect_ratio = _nearest_aspect(ref) if ref is not None else ASPECT_WIDESCREEN
+        width, height = _canvas_dimensions(resolution, aspect_ratio, width, height)
         if mode == MODE_REFERENCE and items:
             if len(items) > MAX_MEDIA:
                 raise ValueError("Reference mode accepts at most fifteen media resources")
@@ -731,7 +765,7 @@ class MiniMaxH3Easy:
         else:
             first_frame, last_frame = cls._keyframes(items, keyframe_role)
             model = h3_bundle.model_for("fl2va")
-            conditioning, latent = _empty_image_conditioning(h3_bundle, prompt, width, height, length, first_frame, last_frame)
+            conditioning, latent = _empty_image_conditioning(h3_bundle, prompt, width, height, length, first_frame, last_frame, str(first_frame_fit))
         context = MiniMaxH3Context(
             conditioning=conditioning,
             latent=latent,

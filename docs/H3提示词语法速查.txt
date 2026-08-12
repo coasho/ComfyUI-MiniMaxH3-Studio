@@ -1,0 +1,294 @@
+# H3 提示词语法速查
+
+只讲**记号**：有哪些标记、写成什么样、放在哪、哪些是代码解析的、哪些只是训练惯例。
+不讲怎么写得好（那在 SKILL.md）。
+
+---
+
+## 0. 先记住这一条：没有解析器
+
+`nodes_minimax_h3.py` 里对提示词只做一件事：
+
+```python
+clip.tokenize(prompt)
+```
+
+**搜不到任何对字段名、`[Shot`、`<d>` 的处理。** 所以下面除了第 1 节，
+**全部是训练惯例**——写错不会报错，只会让模型不认得。
+
+---
+
+## 1. 唯一代码级的记号：`<Picture N>`
+
+`comfy/text_encoders/minimax.py:159`：
+
+```python
+add_text("<Picture %d>: " % counters["image"])
+```
+
+tokenizer **自己拼这个标签**插在视觉块前面。同文件头部注释：
+
+```
+fl2va:  "<Picture 1>: " <vision block> ["<Picture 2>: " <vision block>] <prompt>
+ref2va: image -> "<Picture i>: " <vision block>
+        audio -> "<Audio j>: "              (audio never enters Qwen)
+```
+
+| 记号 | 规则 |
+|---|---|
+| `<Picture N>` | **必须半角英文**。写 `<图片1>`、`〈Picture 1〉`、`＜Picture 1＞` 都永远指不到那张图 |
+| `<Video N>` | 同上 |
+| `<Audio N>` | 同上。**音频不进文本编码器**，只有标签进去 |
+
+**编号 = 连接顺序**（官方模板原话：`in the exact order they were connected`）。
+
+**L2VA 里尾帧是 `<Picture 1>` 不是 `<Picture 2>`** —— tokenizer 按 images 列表顺序拼标签，
+L2VA 只有一张图。
+
+⚠️ 前端引用芯片序列化出的 `__MINIMAX_H3_REF_N__` **只有参考模式后端会解析**
+（`nodes.py:681`）。图生模式原样送进模型 → 首帧引用失效。实测首帧偏差 4.83 → 14.49。
+
+---
+
+## 2. 字段名
+
+七个，全部保持英文原样（训练过的 token）。**正文可以是中文。**
+
+| 字段 | 用在 |
+|---|---|
+| `integrated_multimodal_description` | 基础模式（T2VA / I2VA / FL2VA / L2VA） |
+| `subject_definitions` | Ref2VA 六段式 |
+| `summary` | Ref2VA |
+| `retention_analysis` | Ref2VA 六段式 |
+| `detailed_description` | Ref2VA |
+| `overall_soundscape` | 全部 |
+| `non_diegetic_music` | 全部 |
+
+### 合法组合（22 条出片样本里实际出现过的）
+
+```
+基础三段式    integrated_multimodal_description → overall_soundscape → non_diegetic_music
+Ref2VA 六段式  subject_definitions → summary → retention_analysis → detailed_description
+               → overall_soundscape → non_diegetic_music
+Ref2VA 四段式  summary → detailed_description → overall_soundscape → non_diegetic_music
+               （Subject 在 Shot 1 里内联定义，官方模板就是这么写的）
+无字段名       完全不用字段名，只用 [SHOT N] + 自定义段名（Style: / World: / Audio:）
+```
+
+**顺序固定，不能调换。** 冒号可有可无（`summary:` 和 `summary` 都出现过）。
+
+### 换行
+
+字段名 + 冒号 + 空格，正文**直接接在同一行**。段与段之间**空一行**。
+
+`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`
+**段内一个换行都没有**。`detailed_description` 在官方六段式里会在镜头之间空行，那是正常的。
+
+---
+
+## 3. 首行对齐句
+
+I2VA / FL2VA / L2VA **必须有**，后面空一行。**逐字照抄，别自作主张统一格式。**
+
+**I2VA**（19/19 样本一字不差）：
+```
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+```
+
+**FL2VA**（原文没有尖括号和方括号）：
+```
+How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot N) aligns with the S.SS-second mark of the target video.
+```
+
+**L2VA**（原文有尖括号和方括号）：
+```
+How the reference pictures align with the target video — <Picture 1> (from [Shot N]) aligns with the S.SS-second mark of the target video.
+```
+
+**Ref2VA**（只钉一个，其余明写全程支持）：
+```
+How the reference pictures align with the target video — <Subject 1> (from [Shot 1]) aligns with the 0.00-second mark of the target video; <Subject 2>, <Subject 3>, and <Subject 4> support character appearance and scene environment throughout.
+```
+
+`S.SS` = 视频时长，**必须两位小数**。
+
+---
+
+## 4. 镜头标记
+
+```
+[Shot 1] ……                                  ← 首镜头不带时间戳
+[Shot 2] At 00:02.200, ……                    ← 之后每个都带
+```
+
+| 形式 | 说明 |
+|---|---|
+| `[Shot N]` | 常规。`[SHOT N]` 大写也能用（长文派） |
+| `At MM:SS.mmm` | **毫秒三位**。`At 00:02.200` |
+| 编号 | 从 1 连续递增，时间戳必须递增 |
+
+⚠️ **`[镜头N]` 中文也有效** —— 实测中文写的 `[镜头2] 在 00:02.900，镜头切至…`
+切镜落在 **2.875 秒**，误差不到一帧。
+
+---
+
+## 5. 时间窗口（非官方）
+
+来自 MiniMax 自己的 IT2V 系统提示词，**官方 GUIDE 里没有**。要一镜到底又要控制段落节奏时用：
+
+```
+[0s-2.0s] ……
+[2.0s-4.4s] ……
+```
+
+**和 `[Shot N]` 混用没有先例，未验证。** 一镜到底就只用时间窗口，不要用 `[Shot N]`。
+
+---
+
+## 6. 台词
+
+三种写法都出片：
+
+```
+<角色名> (S1) <表情/嗓音状态>, and says: <d>[English] ……</d>      ← Pixaroma
+<Subject 3> (S1) says with an argumentative tone: <d>[Chinese] ……</d>  ← 官方模板
+(S1): <d>[Japanese] ……</d>                                        ← 官方六段式
+```
+
+| 记号 | 规则 |
+|---|---|
+| `<d>` … `</d>` | 成对。19 条里 9 条用、10 条不用都出片 |
+| `[语言]` | **必需**。`[English]` `[Chinese]` `[Japanese]` `[Korean]` … |
+| `(S1)` `(S2)` | **可选**。按角色分配，不按出场顺序重置 |
+| 说话动词 | `says:` / `yells:` / `whispers` —— 音量从动词分开 |
+
+**繁体中文有效。** 拉长音直接重复字母（`shiiiiit!!!!!`），急促重复直接重复词。
+
+### 台词时机
+
+**官方语法里没有给台词打时间戳的机制。** `在 00:01.300，…说：` 无效，模型直接忽略。
+实测写 1.3 秒、写 3 秒，都在 0 秒开口。
+
+能用的只有两个：**换镜头**（`[Shot N] At …`）或**时间窗口**（第 5 节）。
+
+---
+
+## 7. Ref2VA 专用记号
+
+```
+<Subject N>
+```
+
+不只用来定义角色。官方允许 "Styles, actions, expressions, or poses" 当 Subject。
+实际样本里用来定义：角色、道具、场景、**最终结果状态**、服装。
+
+`retention_analysis` 里每个 Subject 一行，值只有两个：
+
+| 值 | 含义 |
+|---|---|
+| `fully_preserved` | 照抄参考 |
+| `attribute_transfer` | 新造的，但继承某项属性（**要写明继承哪一项**） |
+
+写法：`<Subject N>: <值> – <理由>`（破折号后跟理由）。
+
+`summary` 段以 `[reference generation]` 开头。
+
+---
+
+## 8. 受控词表
+
+| 类别 | 可用值 |
+|---|---|
+| 风格 | `Cinematic` / `live-action` / `2D-animated` / `3D CG` / `claymation` / `watercolor` / `vintage film` |
+| 幅度 | `small` / `large` —— **只有两档** |
+| 速度 | `slow` / `fast` —— **只有两档** |
+
+**官方没有焦段词**（广角、微距），**也没有景别和机位角度的受控词表** —— 当普通描述写即可。
+
+⚠️ 别混搭：`photorealistic anime` 会让模型混乱。选定一个。
+
+**点名一部作品比任何技法描述都有效**：`the distinctive anime style of Gintama`。
+
+---
+
+## 9. 强调符号
+
+```
+⚠️This video has STRICTLY 7 shots — do not add extra shots.⚠️
+```
+
+⚠️ 包住的硬约束模型确实更听。用在镜头数、轴线、连续性契约这类**不能违反**的约束上。
+
+---
+
+## 10. 标点约定
+
+| 符号 | 用法 | 频次（19 条样本） |
+|---|---|---|
+| `,` | 主力，分词小句之间 | 48.3 / 篇 |
+| `.` | 句号 | 15.5 / 篇 |
+| `—` 破折号 | **把概括立刻落实到部位**：`Her face is horrified—eyes wide, brows up high` | 3.5 / 篇 |
+| `;` | 分号，动作句和余韵句之间 | 0.6 / 篇 |
+| `→` 箭头 | 写作画流程：`anticipation pose → smear → landing pose` | 长文派 |
+| `"…"` 引号 | 包拟声词：`a comical "bambambam" effect` | 六段式 |
+
+---
+
+## 11. 硬限制
+
+| 项 | 值 |
+|---|---|
+| 时长 | **4 ~ 15 秒** |
+| 帧率 | 24fps |
+| **帧数** | 必须 **≡ 5 (mod 17)**：`max(5, round(秒*24)) + (5 - (max(5,round(秒*24)) % 17)) % 17`<br>5s→**124** · 10s→**243** · 15s→**362** |
+| 参考图 | ≤ 9 |
+| 参考视频 | ≤ 3（各可带配套音轨） |
+| 参考音频 | ≤ 3（独立） |
+| 混合总数 | ≤ 12 |
+| 提示词 | **≤ 7000 字符** |
+| 边长 | 32 的倍数 |
+
+### 官方分辨率表（16:9，竖屏对调）
+
+| 百万像素 | 输出 |
+|---|---|
+| 0.4 | 864 × 480 |
+| 0.7 | 1152 × 640 |
+| 0.98 | 1344 × 768 |
+| 1.5 | 1664 × 928 |
+| 2.0 | 1920 × 1088 |
+
+---
+
+## 12. 模式与首行的对应
+
+| 模式 | 输入 | 首行对齐句 | 字段 |
+|---|---|---|---|
+| T2VA | 只有文字 | 无 | 三段式 |
+| I2VA | 一张图（= 第 0 帧） | I2VA 那句 | 三段式 |
+| FL2VA | 首帧 + 尾帧 | FL2VA 那句 | 三段式 |
+| L2VA | 只有尾帧 | L2VA 那句 | 三段式 |
+| Ref2VA | 任意混合参考 | Ref2VA 那句 | 六段式或四段式 |
+
+⚠️ **可以混**：节点走 Ref2VA（挂多图），提示词写基础三段式 + I2VA 锚点。
+`<Picture 1>` 钉第 0 帧，`<Picture 2>` 及以后**在正文里一个字都不提**，
+只作为视觉条件供给画风和长相。19 条出片样本就是这么干的。
+
+---
+
+## 13. 机检
+
+```bash
+python tools/h3_prompt_lint.py 提示词.txt --seconds 15
+```
+
+查本文全部可机检项。22 条已出片的提示词上 0 ERROR。
+
+---
+
+## 未验证
+
+- 中文写的**首行对齐句**在 L2VA 下是否有效（I2VA 下验过，首帧锚住了）
+- 时间窗口 `[0s-2.6s]` 和 `[Shot N]` 混用是否有先例
+- 中文片名点名画风是否和英文片名等效
+- Ref2VA 里把画风单开成 `<Subject N>` 的实际效果强度

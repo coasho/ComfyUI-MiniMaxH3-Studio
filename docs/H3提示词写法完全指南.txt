@@ -1,0 +1,1745 @@
+==============================================================================
+MiniMax H3 提示词写法完全指南
+==============================================================================
+
+本文件由 ~/.claude/skills/h3-prompt-practical/ 下的 5 个文件原样合并而成，
+内容未作任何删改。每个来源文件以 ==== 分隔线标出原路径。
+
+目录：
+  1. SKILL.md                                         主文件 —— 索引与速查
+  2. references/reference-19-prompts.md               拆解 19 条稳定出片的提示词
+  3. references/three-reference-workflows.md          三份参考工作流的完整拆解
+  4. references/templates.md                          可直接改的模板
+  5. references/verified-log.md                       每条结论的实测记录
+
+
+
+==============================================================================
+第 1 部分 / 共 5 部分   ——   主文件 —— 索引与速查
+来源：h3-prompt-practical/SKILL.md   （9487 字符）
+==============================================================================
+
+---
+name: h3-prompt-practical
+description: Write MiniMax H3 prompts that actually work in ComfyUI — mode selection, section skeletons, intra-shot timing, anime/2D style anchoring, colour locking, and the workflow settings that silently ruin output. Use when writing or debugging an H3 prompt, when output looks Live2D/flat/off-model, when dialogue starts at the wrong time, when a stray vocal sound appears at the head of the clip, or when picking between I2VA and Ref2VA. Supplements the official h3-prompt-writing skill with behaviour verified on real generations.
+---
+
+# H3 提示词实战
+
+官方的 `h3-prompt-writing` 讲的是**规范**。这份讲的是**规范之外、实跑才知道的部分**。
+两份冲突时以本篇为准 —— 本篇每一条都来自实际生成的对照结果。
+
+## 一、先选模式，这一步定生死
+
+| 你的素材 | 你想要 | 用 |
+|---|---|---|
+| 一张图，要让**这张图动起来** | 开场就是这张图 | **I2VA** |
+| 一张图，要**换画风 / 要体积 / 要自由构图** | 角色一致即可 | **Ref2VA** |
+| 首帧 + 尾帧 | 中间补全 | FL2VA |
+| 只有尾帧 | 倒推过程 | L2VA |
+| 只有文字 | — | T2VA |
+
+**最容易踩的坑**：拿一张**平面二维插画**走 I2VA，同时要求「三维体积 / 环绕机位 / 换画风」。
+第 0 帧被钉死成那张没有厚度的画，而提示词要求它渲出体积、绕到原图不存在的侧面 ——
+模型只能瞎编，输出是**五官崩坏的怪物**。这两个需求在 I2VA 下互斥。
+
+要体积或换画风，**必须走 Ref2VA**：图只定义角色，不是首帧。
+
+### 想两个都要：Ref2VA 管线 + 基础模式提示词
+
+社区 19 条实测出片的写法，绕开了上面那个矛盾：**节点用 `MiniMaxH3ReferenceToVideo`
+挂 2～3 张图，提示词却写成基础模式三段式**，只用 I2VA 那句锚点把 `<Picture 1>` 钉到 0 秒。
+
+`<Picture 2>` 及以后在正文里**一个字都不提**——它们只作为视觉条件进模型，
+无声地供给画风和角色长相，不参与任何时间安排。
+
+钉构图的走 Picture 1，想加进去的画风/角色/道具走 Picture 2+，两边不打架。
+细节见 `references/reference-19-prompts.md`。
+
+## 二、骨架
+
+**基础模式（T2VA / I2VA / FL2VA / L2VA）三段**，段间空一行：
+
+```
+integrated_multimodal_description: [Shot 1] ...
+
+overall_soundscape: ...
+
+non_diegetic_music: ...
+```
+
+**Ref2VA 六段**，顺序固定：
+`subject_definitions` → `summary` → `retention_analysis` → `detailed_description` → `overall_soundscape` → `non_diegetic_music`
+
+字段名保持英文原样（训练过的 token）。**正文用中文完全没问题**，见第四节。
+
+首行对齐指令（I2VA / FL2VA / L2VA 必须有，后面空一行）：
+
+```
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+```
+```
+How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot N) aligns with the S.SS-second mark of the target video.
+```
+```
+How the reference pictures align with the target video — <Picture 1> (from [Shot N]) aligns with the S.SS-second mark of the target video.
+```
+
+`S.SS` = 视频时长，**必须两位小数**。FL2VA 那条原文没有尖括号和方括号，L2VA 那条有 —— 照抄，别自作主张统一。
+
+**L2VA 里尾帧是 `<Picture 1>` 不是 `<Picture 2>`**：tokenizer 按 images 列表顺序拼标签，L2VA 只有一张图。
+
+## 三、`<Picture N>` 必须是英文，这是代码级的
+
+`comfy/text_encoders/minimax.py` 里 tokenizer **自己拼** `"<Picture %d>: "` 插在视觉块前面。
+写成 `<图片1>` 就永远指不到那张图。`<Audio N>` / `<Video N>` 同理。
+
+（同一处注释还写着 `audio never enters Qwen` —— 音频不进文本编码器，只有标签进去。）
+
+其余结构标记（字段名、`[镜头N]`、运镜、`<d>`）都是**训练惯例**，不是被解析的语法 ——
+`nodes_minimax_h3.py` 里就是 `clip.tokenize(prompt)`，**没有任何解析器**。
+
+## 四、中文可以用
+
+- 官方那 45 条示例提示词**本身就是中文原稿**，英文指南是译本
+- 文本编码器是 Qwen3-VL-32B，原生中英双语
+- README 里「稳定支持 11 种语言」说的是**对白语言**，不是提示词语言
+
+实测：中文写的 `[镜头2] 在 00:02.900，镜头切至…` 切镜落在 **2.875 秒**，误差不到一帧。
+
+台词一律 `<d>[Chinese] 原话</d>` / `<d>[Japanese] 原話</d>`，**语言标签是必需的**。
+
+## 五、台词时机 —— 只有一个可用手段
+
+**官方语法里没有给台词打时间戳的机制。** 全部示例中台词从不带时间，带时间的只有分镜切换。
+社区实测结论：**台词会挤在所在时间块的开头**。
+
+`在 00:01.300，…说：` 这种写法是**无效的**，模型直接忽略。
+
+能用的是**时间窗口标记**（来自 MiniMax 自己的 IT2V 系统提示词，官方 GUIDE 里没有）：
+
+```
+[0s-2.0s] 描述这一段发生什么
+[2.0s-4.4s] …（说话人1）说：<d>[Chinese] …</d>
+```
+
+台词落在哪个窗口，就从哪个窗口开头附近开始。
+
+**精度有限**，而且受两件事影响：
+
+1. **窗口内容不够，就会提前开口。** 静默段要写满具体动作，一格一件事
+2. **静默占比太高会被拉扯。** 4.5 秒的片子留 2.6 秒静默（58%）时好时坏；
+   同样的 2.6 秒放进 10 秒片子（26%）就稳了。社区密度参考：每 15 秒约 20 个词
+
+## 六、绝对不要写「没有声音」
+
+**每写一次否定式的声音描述，就等于往条件里塞一次那个概念。**
+
+同一份提示词的对照：
+
+| 「没有声音 / 不出声 / 没有呼吸声」出现次数 | 片头怪叫 |
+|---|---|
+| 1 次 | 没有 |
+| **4 次** | **回来了** |
+
+`整体音景` 里写「少女的一次浅呼吸」同样会招来片头人声 —— 那是提示词里唯一主动要求的人声。
+
+**正确做法**：静默段只描述**嘴唇的形状**（「嘴唇轻轻抿在一起」「保持抿着的形状不动」），
+一个字都不提声音。要压开头，就在 0 秒给一个**具体的非人声事件**去演（指甲刮过木面之类）。
+
+## 七、画风 —— 点名一部作品
+
+**这是最大的杠杆，比任何技法描述都有效。**
+
+```
+2D anime television style of My Hero Academia (2016)
+the distinctive anime style of Gintama
+《夏目友人帐》那种电视动画画风
+```
+
+自己造的技法描述（「传统手绘二维赛璐璐动画，二拍作画，轮廓线逐帧重描」）**无效且会带偏**。
+官方风格词表：`Cinematic` / `live-action` / `2D-animated` / `3D CG` / `claymation` / `watercolor` / `vintage film`。
+
+⚠️ **别混搭**：`photorealistic anime` 这种会让模型混乱。选定一个。
+
+## 八、Live2D 感 —— 用作画术语，不是 fps
+
+「太像 Live2D」的本质是**连续可读的匀速位移**。反制写法直接抄社区的原句：
+
+```
+动作画成关键姿势加中割，快的地方用拖影帧，never continuous legible travel
+```
+
+配套三样：
+
+- **定格**：每个动作到位之后画面停住一拍再进下一个（`held frames`）
+- **预备与收势**：起手前先反向蓄一下，到位后过冲再回弹
+- **次级摆动**：头发、饰品、宽袖持续轻摆，主体停下后还要多晃两三下才停
+
+⚠️ **有硬切可用时，先别上这套。** 19 条稳定出片的提示词里，上面这些术语出现次数是
+定格 0、关键姿势 0、拖影 1、`never continuous legible travel` 0 ——
+他们的动漫感全靠**每条开头的 `2D-animated anime, cinematic`** 加**高密度硬切**。
+
+作画术语是**没有剪辑可借力时（单镜头长镜）的替代方案**。多镜头片先靠剪辑，不够再加。
+
+分镜密度：实测 **15 秒 6 个镜头**就够（第一刀在 1.6～6 秒，中间每 2～3 秒一刀，
+最后一刀落在 11～12 秒）。全部 `Static Shot` + `hard cut`，**一个运镜词都不写**。
+
+（要一镜到底就用第五节的时间窗口，不要用 `[Shot N]`。）
+
+## 九、颜色漂移
+
+一行搞定，不要逐色围栏：
+
+```
+Colors LOCKED：和服=深红与黑，彼岸花=红，面具=白底红纹黑眼孔，头发=浅棕
+```
+
+Ref2VA 里另有官方机制：把画风单独声明成一个 `<Subject N>`（官方允许 "Styles, actions, expressions, or poses" 当 Subject），标 `fully_preserved`。
+
+## 十、长度：真正的约束是顺序，不是字数
+
+我写过「2500 字直接崩」，那次实测是真的，但**归因错了**——
+崩的是**主体描述被挤到第四段**，身份锚点被稀释，不是字数本身。
+
+社区一份出片稳定的 19 条提示词实测：**2310～3865 字符，中位 3091**，全部正常出片。
+
+能撑住长度的三个条件：
+
+1. **角色名每个镜头开头都出现**，锚点从头到尾不断
+2. **每个镜头写成一句话**，不是一段
+3. 字数花在**动作和声音的具体化**上，不花在风格形容词堆叠上
+
+三条有一条不满足，就退回 1000～1500 字。
+
+## 十一、提示词之外 —— 这些会静默毁掉输出
+
+| 项 | 症状 | 正确值 |
+|---|---|---|
+| **步数** | 4 步 → **全片音频变噪声**（峰值 0.4、频谱平坦度 0.29） | Turbo LoRA 走 8 步；不挂 LoRA 走 18–20 步 |
+| **调度器** | 官方模板注释：**`beta` / `normal` 优于 `simple`**，参考重的提示词尤其明显 | `beta`（社区 turbo 工作流也用 beta）|
+| **帧数** | 不是任意整数 —— 必须 **≡ 5 (mod 17)** | `max(5, round(秒*24)) + (5 - (max(5,round(秒*24)) % 17)) % 17`<br>5s→**124** · 10s→**243** · 15s→**362** |
+| **SigmaShift** | 音频档非默认值会影响音频采样 | `video 12 / audio 3` |
+| **LazyCache** | 跳 2/8 步 → 首帧偏差从 4.8 跳到 14，画面明显劣化；跳 1 步才干净 | 关掉，或换 `SpectrumApplyMiniMaxH3`（H3 专用，`audio_blend_weight=0` 不动音频）|
+| **`ref_image_size`** | 身份不像 | `match` 快 / **`max` 保到 2048px 短边，身份更强**（参考 token 每一步都跟着跑，慢）|
+| **首帧适配** | 拉伸会变形；裁切走 lanczos 会被 VAE 放大成彩色描边 | 裁切 + 面积平均缩放 |
+| **宽高比** | 锁死的比例和原图不符 → 大量裁切或变形 | `auto`（跟随图片）|
+| **分辨率** | 太高会拖垮，也更容易崩 | 官方表按百万像素给：0.4MP→864×480 · **0.98MP→1344×768** · 2.0MP→1920×1088（边长 32 的倍数，竖屏对调）|
+
+**画面「糊」优先查 LazyCache 和步数，不要先怀疑提示词。** 实测跳步数和画质是一一对应的。
+
+**参考容量**：≤9 图 / ≤3 视频（各可带配套音轨）/ ≤3 独立音频。标签按**连接顺序**编号，
+`<Picture N>` / `<Video N>` / `<Audio N>`。官方注释：Ref2VA **对措辞极度敏感**，
+要明写「哪个参考驱动这个镜头的哪一部分」。
+
+## 十二、硬限制
+
+4–15 秒 · 24fps · ≤9 图 / ≤3 视频 / ≤3 音频（混合 ≤12）· 提示词 ≤7000 字符
+
+运镜／幅度／速度是受控词表，**幅度和速度各只有两档**（small/large、slow/fast）。
+官方**没有**焦段词（广角、微距），也没有景别和机位角度的受控词表 —— 当普通描述写即可。
+
+## 十三、句法层 —— 从 19 条稳定出片的提示词抽出来的
+
+前面十二节讲写什么，这节讲**怎么造句**。全部来自对 19 条实拍提示词的句法统计，
+完整版在 `references/reference-19-prompts.md`。
+
+**一个镜头三句话**：机位句 → 动作长句 → 余韵句。分号连，不分行。
+
+| 规则 | 写法 | 实测依据 |
+|---|---|---|
+| **时态分工** | 主动作一般现在时打点（`brows slam up`），伴随动作用分词（`ponytail whipping`） | 全用分词就是 Live2D 感的来源 |
+| **台词接在嘴部动作后** | `mouth opening in disbelief as she says:` | 语法钉住时机，比时间戳可靠 |
+| **表情写成 A→B** | `expression flips from shock into stubborn denial` | 19 条里没有一次单一形容词 |
+| **零转折零因果** | 只用 `and` / `as` / `with` / `then` | `but` 0 次、`before` 0 次 |
+| **破折号落实概括** | `Her face is horrified—eyes wide, brows up high` | 67 次，每条 3.5 次 |
+| **`only` 收敛构图** | `extreme close-up on X only` | 61 次 |
+| **数量词钉死** | `one single high ponytail only not twintails` · `one gloved hand` | `one` 62 · `single` 41 —— 压多手多物 |
+| **跨切声明连续** | `keeps <动词ing>` · `still <状态>` · `hard cut back to <之前的机位>` | 治画面断层 |
+| **视线每镜交代** | `red eyes locked on X` | `locked on` 20 次 |
+| **末镜头收 `through the end`** | `candlelight flickering across X through the end.` | **19/19，每条一次，全在最后一镜** —— 治片尾冻结 |
+| **待机层单独声明** | `Both already breathing, hair strands drifting, torch flames flickering on stone.` | 不用定格/关键姿势那套的原因 |
+| **次级运动绑节拍** | `ponytail whips with each No` · `stutter-zoom punches on every syllable` | 统一句式 `<效果> on every <节拍>` |
+| **画面段不写声音** | 呼吸只写胸口起伏和嘴唇形状 | 声音词 画面段 19 vs 音景段 89 |
+| **音景两句** | 底噪句（`… room tone … under the whole scene.`）+ 事件链句（每声绑动作，收在 `on the final cut`） | `room tone` 19/19 |
+| **颜色只用基础词贴名词** | `golden eyes` `white winged crown` `deep brown skin` | 全篇只 9 个颜色词，无文学化色彩词 |
+| **副词几乎不用** | 强度靠动词：`slams` 而不是 `moves quickly` | `-ly` 副词全篇约 40 个 |
+
+**预算**：Shot 1 约 780 字符（完整外貌 + 场景 + 待机层），Shot 2+ 各约 380 字符。
+
+## 十四、四种流派，按需求挑
+
+四份出片工作流用的是四种完全不同的写法。**别混着抄，挑一种写到底。**
+
+| 你的需求 | 用哪套 | 核心装置 |
+|---|---|---|
+| 单人对话、要稳、不崩 | **Pixaroma 19 条** | 三句一镜 · `only` · 数量词 · `keeps`/`still` · `through the end` |
+| 多人打斗、空间不能乱 | **工程化长文** | 罗盘方位 + `180° LINE` + `⚠️ACTION VECTORS` + 连续性契约 |
+| 换画风 / 变身 / 有明确结局 | **官方六段式** | 把**结果状态**也定义成 `<Subject N>` · `attribute_transfer` |
+| 中文台词 + 要字幕 | **官方模板精简版** | 四段式 · `the bottom show words "…"` |
+
+几条跨流派通用的：
+
+- **点名一部作品**是最大杠杆（`the distinctive anime style of Gintama`，且在多段里重复）
+- **次级运动绑到说话上** —— 两个独立流派收敛到同一条：
+  `Her tiger ears twitch slightly as she speaks` / `ponytail whips with each No`
+- **动漫符号语言直接命名就画得出来**：
+  `eyes shrunken into tiny white dots` · `dramatic straight-line shadows crossing her face` · `A sweat drop falls from her temple`
+- **拟声词用引号写进正文**：`a comical "bambambam" effect` · `"snip-snip"` · `"boing"` · `"record scratch"`
+- **⚠️ 符号包住的硬约束模型确实更听**：`⚠️This video has STRICTLY 7 shots — do not add extra shots.⚠️`
+- **结尾逐项点名容易崩的东西**：两个身体不要融、五指、四肢拓扑、道具的长度和形状、无水印无字幕
+
+## 参考
+
+- `references/verified-log.md` —— 每条结论的实测数据和对照过程
+- `references/templates.md` —— 可直接改的完整模板（I2VA / Ref2VA / 一镜到底 + 时间窗口）
+- `references/reference-19-prompts.md` —— 拆解一位作者 19 条稳定出片的提示词（30 条句法规则 + 词库 + 数据）
+- `references/three-reference-workflows.md` —— 另外三份工作流的完整拆解：帧数公式、官方分辨率表、
+  调度器/参考尺寸的官方说明，以及**另外三种提示词流派**（工程化空间矢量 / 官方六段式 / 中文台词烧字幕）
+
+
+==============================================================================
+第 2 部分 / 共 5 部分   ——   拆解 19 条稳定出片的提示词
+来源：h3-prompt-practical/references/reference-19-prompts.md   （18525 字符）
+==============================================================================
+
+# 拆解：19 条实际出片的提示词
+
+来源：社区一份成片 mp4 里嵌在 XMP `xmpDM:logComment` 的 `PixaromaPrompt.PromptState`。
+同一作者同一套设定的 19 次生成，**全部出片、画风一致**。以下全是对这 19 条原文的统计和
+句法拆解，不是推测。（内容是成人向，这里只取写法。）
+
+**这份文档的重点是"怎么写句子"，不是"用了几次某个词"。** 统计放在最后。
+
+---
+
+# 第一部分：描述方式
+
+## 1. 一个镜头 = 三句话
+
+```
+① 机位句：At 00:05.000, over-the-shoulder Hollywood dialogue angle
+          from behind Olga's black hair and bare shoulder, framing Chloe's face and torso.
+
+② 动作长句：Chloe's red eyes widen, brows pulling tight; she shakes her head, ponytail whipping,
+          one gloved hand lifting toward her chest as her stance shifts and she leans in,
+          mouth opening in disbelief as she says: [English] No way. That's impossible.
+
+③ 余韵句：Torchlight slides across her stomach and garter straps;
+          her expression flips from shock into stubborn denial, eyes flicking hard onto Olga.
+```
+
+三句缺一不可。②③ 之间用分号，不分行。
+
+## 2. 机位句：点名"挡在前面的是什么"
+
+不写"过肩镜头"，写**从谁的什么部位后面拍、框住谁的什么部位**：
+
+```
+over-the-shoulder Hollywood dialogue angle from behind Olga's black hair and bare shoulder,
+framing Chloe's face and torso.
+```
+
+反打镜头就是**镜像同构**，词全部对调：
+
+```
+reverse over-the-shoulder from behind Chloe's blonde ponytail and shoulder, tight on Olga.
+```
+
+`Hollywood dialogue angle` 是他们当固定词组用的（多条出现）。
+
+**景别偏好实测**：`extreme close-up` **34 次**，`close-up` 13 次，`two-shot` 13 次，
+`over-the-shoulder` 14 次 —— **全片几乎不拉远**，最远只有 2 次 `medium-wide`，没有一个 wide shot。
+480×864 竖屏 + 极特写 = 模型每帧只需要画很少的主体，这是造型不崩的物理原因。
+
+## 3. 动作长句：身体部位各自当主语的分词链
+
+主语先做一个主动作，然后**每个身体部位单独成为一个小句挂在后面**：
+
+```
+Chloe's red eyes widen, brows pulling tight; she shakes her head, ponytail whipping,
+one gloved hand lifting toward her chest as her stance shifts and she leans in, …
+```
+
+眼睛 / 眉毛 / 头 / 马尾 / 手 / 重心 / 上身 —— 七个部位，一句话里全部在动。
+实测**平均每条提示词 10.4 个现在分词小句**，约每镜头 2 个。
+
+**时态是分工的**：
+
+| 时态 | 用途 | 例 |
+|---|---|---|
+| 一般现在时 | 打点、瞬间命中 | `eyes widen` `brows slam up` `she shakes her head` |
+| 现在分词 | 持续、伴随 | `brows pulling tight` `ponytail whipping` `hand lifting toward her chest` |
+
+**别全用分词**，那会变成一片糊状的连续位移（就是 Live2D 感的来源）。
+主动作用一般现在时打出节拍，伴随动作用分词铺开。
+
+## 4. 台词是动作长句的最后一节，不是独立项
+
+```
+… mouth opening in disbelief as she says: [English] No way. That's impossible.
+```
+
+**紧贴 `says` 的必须是嘴部动作**。19 条里全部如此：
+
+```
+lips parting with heat as she says:
+mouth opening in disbelief as she says:
+as her lips curl and she says:
+expression cracking from shock into raw denial as she says:
+```
+
+台词时机是被**语法**钉住的 —— 它是一个长句的结尾，模型必须先演完前面的动作才能到这里。
+这比时间戳和时间窗口都可靠，因为它不依赖模型理解数字。
+
+嗓音方向写在同一句里，不另起：
+
+```
+in a defeated tired breathless voice, soft and out of air:
+whispers soft and out of breath, barely any air left:
+```
+
+动词分开用：`says:` / `yells:` / `whispers` —— 音量从动词就分了。
+
+## 5. 余韵句：光影划过身体 + 表情 A→B
+
+每个镜头都有，作用是**证明说完之后镜头还活着**。
+
+**表情永远写成转换，从不写单一形容词**。19 条里没有一次"她很生气"：
+
+```
+expression flips from shock into stubborn denial
+expression cracking from shock into raw denial
+smirk breaks into a mischievous anime laugh
+smirks then sharpens
+face breaks into full startled horror
+```
+
+A 和 B 都必须是脸上读得出来的状态。
+
+## 6. 破折号 = 把概括立刻落实到部位
+
+全篇 **67 次**（每条 3.5 次）。用法只有一个：**说了一句概括，马上用破折号拆成具体部位**。
+
+```
+Her face is horrified—eyes wide, brows up high, mouth open in shock
+Chloe's face contorts—eyes wider
+extreme close-up on Chloe's horrified anime face—one single high ponytail only beside her head not twintails
+hard cut smash-zoom on Olga's face on the right—white winged crown flaring in the whoosh, golden eyes blazing
+```
+
+**框好画面之后，破折号后面立刻交代"这个框里具体是什么"。** 抽象词一个都不留着不落实。
+
+## 7. 待机层单独声明 —— 不用"定格/关键姿势"的原因
+
+Shot 1 里有一句独立的：
+
+```
+Both already breathing, hair strands drifting, torch flames flickering on stone.
+```
+
+**把"待机层"和"动作层"分开写**。`already` 全篇 11 次，`drifting/flickering/swaying` 14 次。
+
+先声明"基线上东西本来就在动"，再写动作层。这样静止的瞬间也不会变成静止的图。
+
+## 8. 次级运动绑到台词的音节 / 每一刀上
+
+这是全篇最讲究的一条。头发不是"飘"，是**在某个具体节拍上动**：
+
+```
+ponytail whips with each No
+Her ponytail slides on the question
+ponytail sliding as she shakes her head hard
+ponytail whipping as she stares straight at Olga
+```
+
+动漫特效同理：
+
+```
+with stutter-zoom punches on every shout
+stutter-zoom punches and whoosh flashes on every syllable
+layered anime whoosh-bangs and zoom impact hits on every cut
+speed-lines and impact flashes on every stroke
+candlelight strobing on wet naked skin through the whooshes
+```
+
+统一句式：**`<效果> on every <节拍>`**，节拍是台词音节、每一次喊、每一刀、每一次动作往复。
+
+## 9. 最后一个镜头必须以 "through the end" 收尾
+
+**19/19，每条恰好一次，全部落在最后一个镜头。** 这是硬规律。
+
+```
+candlelight flickering across their naked bodies through the end
+torchlight flickering across her face through the end
+candlelight strobing on wet naked skin through the end
+```
+
+句式：`<光源> flickering/strobing across|on <对象> through the end.`
+
+作用是**防止片尾定住**。片尾冻结在 H3 上是常见失败，这一句把光影的动画延续到最后一帧。
+
+## 10. 身份靠"判别特征"重复，不靠重述角色卡
+
+两个角色都是暗精灵，长得像。他们重复的是**区分二者的那一两项**，每条 3～4 次：
+
+| 角色 | 重复的判别特征 |
+|---|---|
+| Olga | `white winged crown`（3～4×）、`golden eyes`（3×）、`deep brown skin` |
+| Chloe | `red eyes`（3～4×）、`one single high ponytail only … not twintails` |
+
+而 `hair` 全篇只出现 0～4 次 —— **完整外貌只在 Shot 1 写一次**，之后每个镜头只复用
+**这个景别看得见的那 1～2 项**，而且正好就是机位句里当前景的那个东西。
+
+Shot 1 的完整外貌写成**挂在名字上的同位语链**：
+
+```
+the dark-elf woman shown in <Picture 1>, Olga Discordia,
+long black hair with a white winged headpiece, pointed ears, golden eyes, deep brown skin,
+purple strap lingerie corset …, purple arm sleeves, black panties, purple drapes over her hips,
+stands in a candlelit stone castle corridor with tall arched windows, hanging banners, and wall torches.
+```
+
+`<品类> shown in <Picture 1>` → `<名字>` → `<外貌逐项逗号列>` → `<动词>`，
+一句话把「图 = 名字 = 长相」焊死。
+
+## 11. 出画入画点名边缘
+
+镜头外的东西进画，明写从哪一边进：
+
+```
+Olga's bare brown hand entering from the right side of the screen
+Olga's two bare fingers coming from the right side of the screen
+bare stomach edge jumping at the top of frame
+thighs quivering at both edges of frame
+```
+
+`from the right side of the screen` 出现 **14 次**，10/19 条有。
+而且**只钉入画的那一方**（Olga 14 次在右，Chloe 从不钉左）—— 只在需要时用，不对称也没关系。
+
+## 12. 否定句只对"反复复发的那一项"用
+
+19 条里 **16 条一个 `No …` 都没有**。
+
+唯一密集用否定的是这个：`one single high ponytail only … not twintails` —— 同一条里出现 3 次。
+显然是模型反复把单马尾画成双马尾，才针对这一项密集重复。
+
+**平时完全不写否定；只在某个具体缺陷反复复发时，针对它一项密集重复。** 不撒网列禁忌。
+
+## 13. 音景：底噪一句 + 事件链一句
+
+结构和画面部分同构，19/19 一致：
+
+```
+Low stone-castle room tone with soft torch crackle and distant hall echo under the whole scene.
+Close fabric strain then a sharp rip as Chloe's panties tear off, a light scuff of cloth,
+Chloe's sharp startled breath on the reveal, then clear close-mic'd anime-style female voices:
+Chloe's fearful question, Olga's short shameless reply,
+and Chloe's tight horrified inhale on the final face cut.
+```
+
+1. **第一句是持续底噪**，明写 `under the whole scene`。`room tone` 出现 **19/19**
+2. **第二句按时间顺序**，每个声音都用 `as` / `then` / `on the …` 绑到发出它的那个动作
+3. **明确收在某一刀上**：`on the final cut` / `on the final face cut`
+4. 带录音视角：`clear close-mic'd anime-style female voices`
+
+**没有一个孤立的声音。** 不写「喘息声」，写「落到床上时的那声惊喘」。
+`breath` 是全篇最高频的声音词（31 次），全部绑着动作。
+
+`non_diegetic_music: N/A` —— **19/19 一条 BGM 都不要**。所有听感压在 soundscape 那一段里。
+
+## 14. 每条开头四个固定槽位
+
+19/19 完全一致：
+
+```
+[Shot 1] 2D-animated anime, cinematic, <Static Shot 或运动词>, <景别 + 对象>.
+```
+
+`2D-animated anime, cinematic,` 一字不差出现 19 次。第三槽是 `Static Shot`（11 条）
+或 `smash-zoom`（4 条）/ `medium-wide`（2 条）/ `tight close two-shot`（2 条）。
+
+## 15. 运镜写在散文里，当动作句的最后一节
+
+我第一遍统计说"0 个运镜词"是查漏了 —— 他们**小写写在句子里**，不当字段：
+
+```
+Her chest rises on the line; the camera eases in, then cuts.
+the camera pushes in on her face through the final seconds
+hard cut spiral whoosh into extreme profile close-up
+smash-zoom extreme close two-shot
+```
+
+5/19 条有。**大部分镜头确实是死的**，节奏由剪辑扛。
+
+## 16. 零转折、零因果、零先后
+
+连接词统计：
+
+| 词 | 次数 |
+|---|---|
+| `and` | 206 |
+| `as` | 64 |
+| `with` | 63 |
+| `then` | 18 |
+| `while` | 11 |
+| **`but`** | **0** |
+| **`before`** | **0** |
+| `until` | 1 |
+| `so` | 1 |
+
+**一个转折词都没有，一个因果词都没有，一个"先…后…"都没有。**
+
+只有两种关系：**同时**（`as` / `with` / `and`）和**接着**（`then`）。
+模型不需要理解逻辑，只需要知道"这些事同时在发生"。
+
+写「她本来在笑，但是看到之后就愣住了」是错的 ——
+要写成 `smirk breaks into startled horror`（第 5 条的 A→B）。
+
+## 17. `only` 是构图收敛器 —— 全篇 61 次
+
+放在被摄对象后面，意思是**这个框里不要出现别的东西**：
+
+```
+extreme close-up straight down on Chloe's face only
+extreme close-up top-down tight on the contact only
+hard cut extreme close-up profile of the rub only
+only hand from the right and X
+one single high ponytail only … not twintails
+```
+
+比破折号（67 次）还高频。极特写容易漂出去多画东西，`only` 是把它按住的手段。
+
+## 18. 数量词钉死 —— `one` 62 次 / `single` 41 次
+
+```
+one single high ponytail only not twintails
+one gloved hand lifting toward her chest
+two bare fingers entering from the right side of the screen
+```
+
+`one` 62 · `single` 41 · `two` 21 · `both` 12 · `each` 16 · `every` 13。
+
+**数量词 + `only` 是对抗多手/多物/复制的主要手段**。视频模型天然会长出多余的手和头发，
+这一套是唯一稳定压住它的写法。
+
+## 19. 跨硬切的连续性靠三个词
+
+硬切之后画面断层，是明确写出来"什么没变"来解决的：
+
+| 装置 | 用法 | 原文 |
+|---|---|---|
+| `keeps <动词ing>` | 动作没停 | `keeps rubbing … without stopping` `keeps laughing` |
+| `still <状态>` | 状态没变 | `still on her back` `still flushed` `still locked on Olga` |
+| `back to <之前的机位>` | 回切到用过的机位 | `hard cut back to tight close two-shot with Olga on the right` |
+
+**每次硬切都至少带一个。** 这是他们 15 秒里切 6 刀而不散架的原因。
+
+## 20. 视线是跨切连贯的主装置 —— `locked on` 20 次
+
+```
+red eyes locked on Olga
+eyes half-lidded and locked on Chloe
+pure shock locked toward Olga
+startled face still locked on Olga
+staring up at naked Olga
+```
+
+每个镜头都交代**眼睛看着哪里**。切镜之后视线朝向对得上，观众就不会觉得断。
+
+`into the lens` 只用 1 次（破第四面墙的那一下），别滥用。
+
+## 21. 画面段不写声音，音景段不写画面
+
+声音词在**画面段 19 次 / 音景段 89 次**。而且画面段那 19 次绝大多数是
+**看得见的呼吸**，不是听觉描述：
+
+```
+breasts rising on sharp breath
+breath hitching
+lips still parted from the soft out-of-breath whisper
+```
+
+**画面段只写看得见的东西。呼吸只写胸口起伏和嘴唇形状。**
+唯一例外是音源在画外时：`Chloe lets out a long sexy moan off-screen.`
+
+## 22. 副词几乎不用，强度靠动词本身
+
+全篇 `-ly` 副词只有 40 个左右，最高频的 `directly`（10 次）还是机位词（`from directly behind`）。
+
+强度不写 `moves quickly`，写 `slams` / `whips` / `jolts`；
+轻不写 `moves slowly`，写 `eases` / `drifts` / `slides`。**动词自带强度。**
+
+## 23. 颜色只用最基础的六个词
+
+全篇只出现 9 个颜色词：`brown` 61 · `black` 55 · `red` 51 · `white` 46 · `golden` 46 ·
+`purple` 38 · `blonde` 26 · `pale` 7 · `dark-blue` 5。
+
+**没有一个文学化色彩词**（没有 crimson / azure / emerald / scarlet）。
+而且颜色永远**贴着名词写**，全篇同一组搭配：
+`black hair` · `golden eyes` · `red eyes` · `white winged crown` · `deep brown skin` · `purple corset`。
+
+这就是 `Colors LOCKED:` 的实际做法 —— 不需要单开一行锁色，
+**只用基础色词 + 每次都贴同一个名词**就够了。
+
+## 24. Shot 1 是后续镜头的两倍长
+
+| | 字符数中位 |
+|---|---|
+| Shot 1 | **786**（552～1072） |
+| Shot 2+ | **379**（246～903） |
+
+Shot 1 的预算花在：完整外貌同位语链 + 场景固定短语 + 待机层声明。
+之后每个镜头 ~380 字符，只够机位句 + 动作长句 + 余韵句三句。
+
+## 25. 场景名是固定短语，每条一字不差复用
+
+```
+candlelit royal bed
+candlelit stone castle corridor with tall arched windows, hanging banners, and wall torches
+```
+
+不换着说法写。同一个场景在 19 条里用同一个短语，模型每次拿到的都是同一个 token 序列。
+
+## 26. 角色出场先声明状态
+
+```
+Fully naked Chloe on her back legs spread …
+Fully naked Olga Discordia lies on Chloe's left side …
+Both women fully topless …
+Both women breathe hard …
+```
+
+`Fully <状态> <名字>` 打头，然后才接姿势和动作。
+
+## 27. 自造连字符复合词
+
+镜头运动：`smash-zoom` 10 · `whip-zoom` 2 · `crash-zoom` 2 · `stutter-zoom` 2 · `multi-hit` 2
+接触：`skin-on-skin` 10 · `skin-to-skin` 9
+录音：`close-mic'd` 6 · `whoosh-bangs` 2
+画外：`off-screen` 4 · `off-frame` 4
+状态：`half-lidded` 16 · `half-shut` 3 · `half-raised` 2 · `open-mouthed` 2 · `post-orgasm` 2
+
+**需要一个词表里没有的概念就直接用连字符造一个**，模型认。
+
+## 28. 台词写法：口语、脏话、拉长、重复
+
+26 条台词，**中位 8 词**，最长 15 词。19 条里 **6 条完全没有台词**（纯画面 + 音景）。
+有台词的，15 秒里总共 6～61 词，均值 14 词。
+
+```
+Minimax AI? No! No! I can't believe it.
+It's most likely some gooner making us in his bedroom using only one hand.
+Holy fucking shiiiiit!!!!!
+I'm cumming, I'm Cumming, I'm cumming
+There there, its not that bad.
+```
+
+**想要拖长音就把字母重复写出来**（`shiiiiit!!!!!`），
+**想要急促重复就把词重复写出来**（`I'm cumming, I'm Cumming, I'm cumming`）。
+感叹号连打、问号直接用、错别字和小写 `its` 都不修 —— 越像人随口说的越好。
+
+## 29. 换行结构
+
+```
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+                                    ← 空一行
+integrated_multimodal_description: [Shot 1] …（一整段，段内绝不换行）
+                                    ← 空一行
+overall_soundscape: …（一整段）
+                    ← 空一行
+non_diegetic_music: N/A
+```
+
+字段名 + 冒号 + 空格，正文直接接在**同一行**。段内一个换行都没有。
+
+## 30. 整段描述的最后一句是固定句式
+
+19 条里 16 条完全同构：
+
+```
+<角色的视线/表情状态> as <光源> flickers across|behind <对象> through the end.
+```
+
+```
+pure horror staring up toward Olga as candlelight flickers across her face through the end.
+staring at Olga in horrified disbelief while castle torches flicker behind them through the end.
+startled face still locked on Olga as torchlight flickers along the stone walls through the end.
+```
+
+没有台词的片子，在这句后面**再补一句** `No dialogue.` 或 `No dialogue, only moaning.`
+
+---
+
+# 第二部分：可直接抄的词库
+
+## 眼
+
+`eyes widen` · `eyes blow wide` / `blown wide` / `blowing wider` · `eyes half-lidded`
+`eyes locked on X` · `eyes flicking hard onto X` · `eyes blazing mischievous and dominant`
+`eyes narrowed` · `eyes rolled half-shut and wet` · `eyes sharp and locked on X`
+
+## 眉
+
+`brows up high` · `brows slam up` / `slamming up` · `brows drawn tight` / `pulling tight` · `brow lifting`
+
+## 嘴
+
+`mouth open in shock` · `mouth falling open` / `hanging open` / `dropping open`
+`lips parted` · `lips parting with heat` · `lips curl` · `lips hold a knowing, provocative curl`
+`mouth stretched wide yelling` · `lips in a continuous hard smear of motion`（快速说话）
+
+## 表情转换（A→B）
+
+`expression flips from A into B` · `expression cracking from A into B`
+`face breaks into B` · `smirk breaks into B` · `smirks then sharpens`
+
+## 头发 / 布料次级运动
+
+`ponytail whipping` / `whips with each <台词词>` / `slides on the question` / `spilling across the sheets`
+`hair sliding over her bare shoulder` · `hair strands drifting` · `drapes shifting on her thighs`
+`sheets rustling` · `sheet rustle under <某人的呼吸>`
+
+## 动漫特效
+
+`hard anime whoosh` · `whoosh-cut between <X> frames` · `spiral whoosh into <景别>`
+`smash-zoom` · `stutter-zoom punches on every shout/syllable` · `speed-lines`
+`impact flashes on every stroke` · `anime motion blur and flash-cuts on <X>`
+`layered anime whoosh-bangs and zoom impact hits on every cut`
+
+## 光影（余韵句用）
+
+`torchlight flickering on her stomach` · `Torchlight slides across her stomach and garter straps`
+`candlelight flickering across their bodies through the end` · `candlelight strobing … through the end`
+`torch flames flickering on stone`
+
+## 音景
+
+底噪：`Low <环境> room tone with soft torch crackle and distant hall echo under the whole scene.`
+事件：`<声音> as <动作>` · `<声音> on the <某个瞬间>` · `<某人的> startled breath on the reveal`
+人声：`clear close-mic'd anime-style female voices` · `<某人的> tight horrified inhale on the final face cut`
+
+## 动作动词库（按强度分档）
+
+**重击/瞬间**：`slam` `slams` `slamming` · `whip` `whips` `whipping` · `jolt` `jolts` ·
+`snap` · `crash` · `kick up` · `drop` `drops` `dropping` · `spill` `spilled` `spilling`
+
+**中等**：`push` `pushes` `pushing` · `pull` `pulls` `pulling` · `press` `pressed` `pressing` ·
+`lean` `leans` · `lift` `lifting` · `rock` `rocking` · `twist` · `arch` `arched`
+
+**轻/持续**：`slide` `slides` `sliding` · `drift` `drifting` · `ease` `eases` ·
+`flicker` `flickers` `flickering` · `tremble` `trembling` · `quiver` `quivering` · `hitch` `hitching`
+
+## 跨切连续
+
+`keeps <动词ing>` · `still <状态>` · `without stopping` · `hard cut back to <之前的机位>` · `again on X`
+
+## 构图约束
+
+`<对象> only` · `one single <物> only … not <易错的替代物>` · `one <数量> <物>` ·
+`from the right side of the screen` · `at the top of frame` · `at both edges of frame` ·
+`off-screen` / `off-frame`
+
+## 视线
+
+`eyes locked on X` · `still locked on X` · `pure shock locked toward X` ·
+`staring up at X` · `stares straight at X` · `eyes flicking hard onto X` · `into the lens`（慎用）
+
+## 状态声明
+
+`Fully naked <名字>` · `Both women fully topless` · `Both women breathe hard` ·
+`Both already breathing, hair strands drifting, <环境物> flickering on <材质>`
+
+---
+
+# 第三部分：硬数据
+
+| 项 | 实测 |
+|---|---|
+| 条数 | 19 |
+| 字符数 | 2310 / **3091**（中位）/ 3865 |
+| 片长 | **全部 15 秒**，24fps |
+| 分辨率 | **全部 480×864**（竖屏，低分辨率） |
+| 真实镜头数 | **3～7 个**，中位 6 |
+| 首行锚点 | **19/19 完全一致**，一个字不差 |
+| `[Shot 1] 2D-animated anime, cinematic,` | 19/19 |
+| `extreme close-up` | 34 次（最远只有 2 次 `medium-wide`，无 wide shot） |
+| `Static Shot` / `hard cut` | 53 / 70 |
+| 分词小句 | 平均 10.4 条/篇 |
+| 破折号 | 67 次（3.5 次/篇） |
+| `through the end` | **19/19，每条一次，全在最后一个镜头** |
+| `room tone` 开头 | 19/19 |
+| `non_diegetic_music` | **19/19 全是 `N/A`** |
+| `overall_soundscape` | 358 / 453 / 662 字符，一整段 |
+| `No …` 否定句 | 19 条里 **16 条是 0 次** |
+| `<Picture 2>` 及以后 | **0 次** |
+| `<d>` 标签 | 9/19 条用（10 条不用也出片） |
+| `(S1)` / `(S2)` | 6/19 条用 |
+| `only` | 61 次 |
+| `one` / `single` | 62 / 41 次 |
+| `locked on` | 20 次 |
+| `but` / `before` / `until` / `so` | **0 / 0 / 1 / 1** |
+| `and` / `as` / `with` / `then` | 206 / 64 / 63 / 18 |
+| 逗号 / 句号 / 分号 | 48.3 / 15.5 / 0.6 每篇 |
+| Shot 1 vs Shot 2+ 字符 | **786 vs 379**（2.07 倍） |
+| 每镜头字符 | 246 / **410**（中位）/ 1072 |
+| 颜色词种类 | **9 种**，全是基础色 |
+| 声音词 画面段 vs 音景段 | **19 vs 89** |
+| 台词 | 26 条，中位 **8 词**；6/19 条完全无台词 |
+| 台词总量 | 有台词的 6～61 词 / 15 秒，均值 14 词 |
+
+## 模式：Ref2VA 管线 + 基础模式提示词
+
+节点是 `MiniMaxH3ReferenceToVideo`（Ref2VA），挂 **2～3 张参考图**，
+提示词却是**基础模式三段式**，只用 I2VA 那句锚点把 `<Picture 1>` 钉到 0 秒：
+
+```
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+
+integrated_multimodal_description: [Shot 1] …
+
+overall_soundscape: …
+
+non_diegetic_music: N/A
+```
+
+没有 `subject_definitions`，没有 `retention_analysis`，六段式一段都没用。
+
+`<Picture 2>` 及以后**在正文里一个字都不提** —— 只作为视觉条件进模型，
+无声地供给画风和角色长相，不参与任何时间安排。
+
+钉构图的走 Picture 1，想加进去的画风/角色/道具走 Picture 2+，两边不打架。
+
+## 分镜时间点
+
+15 秒片：第一刀落在 **1.6～6 秒**，中间每 **2～3 秒**一刀，
+最后一刀落在 **11～12 秒**，末镜头留 3～4 秒。
+
+## 长度：约束是顺序不是字数
+
+19/19 全部超过 2300 字符，中位 3091。我 skill 里"2500 字直接崩"的实测是真的，
+但归因错了：崩的是**主体描述被挤到第四段**，是**顺序**问题。
+
+能撑到 3800 字符的条件：角色名每镜头开头都出现、每镜头写成一句话、
+字数花在动作和声音的具体化上。
+
+## 我写进 skill 的这些技法，他们基本没用
+
+| 我写的 | 19 条里出现 |
+|---|---|
+| `held frames` / 定格 | **0** |
+| `key pose` / 关键姿势 | **0** |
+| `Colors LOCKED` | **0** |
+| `never continuous legible travel` | **0** |
+| `smear` | 1（用在快速说话的嘴上）|
+
+⚠️ 但他们是**多镜头剪辑片**，动漫感靠 `2D-animated anime, cinematic` + 高密度硬切 + 上面那套
+分词链/破折号/次级运动绑节拍。我们被 Live2D 感卡住的是**单镜头长镜**，没有硬切可借力 ——
+作画术语那套是没有剪辑时的替代方案，不能因为这 19 条没用就判定无效，两边不是同一个问题。
+
+## 采样配置（他们的，供对照）
+
+| | 他们 | 我们当前 |
+|---|---|---|
+| 采样器 | `KSampler` euler + **beta** | `SamplerCustomAdvanced` res_multistep + simple |
+| 步数 | 8 | 8 |
+| Turbo LoRA | `minimax_h3_fl2v_lightx2v_turbo_4step_v0.1` @ **0.75** | `turbo_v4_step600_ema` @ 1.0 |
+| Spectrum | degree **1** / warmup **1** / history **vram** | degree 4 / warmup 5 / history system_ram |
+| EasyCache | **bypass** | 不用 |
+| 文本编码器 | `qwen3vl_32b_heretic_minimax_h3_nvfp4` | 已换成同款 |
+| Video VAE | `minimax_h3_video_vae_int8_convrot` | 已换成同款 |
+| Sage | `MiniMaxH3MemoryEfficientSageAttentionPatch` | 已换成同款 |
+| 分辨率 | 480×864 | 1344×768 |
+
+⚠️ Spectrum 的 `warmup_steps=1`（8 步里第 1 步之后就开始预测）比我们的 5 激进得多。
+他们能这么跑而不糊，可能和 480×864 的低分辨率有关。**没实测过，别直接抄。**
+
+
+==============================================================================
+第 3 部分 / 共 5 部分   ——   三份参考工作流的完整拆解
+来源：h3-prompt-practical/references/three-reference-workflows.md   （13765 字符）
+==============================================================================
+
+# 三份参考工作流的完整拆解
+
+`参考待删1/2/3.json`。三份分别代表**三种完全不同的提示词流派**，加上官方模板自带的技术注释。
+和 Pixaroma 那 19 条（`reference-19-prompts.md`）合起来是四种。
+
+| | 任务 | 步数/调度器 | 提示词流派 |
+|---|---|---|---|
+| 参考1 | ref2va | 20 / simple | **官方模板**，Ref2VA 精简四段 + 中文台词 + 烧字幕 |
+| 参考2 | i2v (fl2va) | 8 / **beta** + Turbo | **工程化长文**，空间矢量 + 连续性契约 |
+| 参考3 | ref2va | 18 / simple | **官方六段式**完整版 + 喜剧节奏 |
+
+---
+
+# 一、硬技术事实（从节点和官方注释里挖出来的）
+
+## 1. 帧数必须 ≡ 5 (mod 17)
+
+参考1 和参考3 都挂了同一个 `ComfyMathExpression`：
+
+```
+max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17
+```
+
+`a` 是秒数。意思是：秒×24 之后，**向上补到模 17 余 5**。
+
+合法帧数：5, 22, 39, 56, 73, 90, 107, **124**, 141, … 341, **362**
+
+- 5 秒 → 120 → **124**
+- 10 秒 → 240 → **243**
+- 15 秒 → 360 → **362**（参考2 的 length 就是 362，Pixaroma 的 PixaromaDuration 也是 `step:17, plus:5`）
+
+**填错帧数不会报错，但潜在打包会错位。** 别手填整数秒×24。
+
+## 2. 调度器：官方说 `beta` / `normal` 优于 `simple`
+
+参考1 的官方 MarkdownNote 原文：
+
+> Sampler: `res_multistep`. **`beta` or `normal` scheduler tends to outperform `simple`
+> for reference-heavy prompts like this one**
+
+参考2（Pixaroma 那套的同源）用的就是 `beta` + 8 步。
+**我们当前用的是 `simple`** —— 这是一个没试过的免费变量。
+
+## 3. `ref_image_size`：match vs max
+
+官方注释：
+
+> `match` scales references down to the generation's resolution (faster);
+> **`max` keeps up to a 2048px short edge for stronger identity fidelity**, at the cost of speed
+> since **reference tokens ride along every sampling step**
+
+身份不像 → 调 `max`。代价是每一步都要背着更多参考 token。
+
+## 4. 官方分辨率表（16:9，边长为 32 的倍数）
+
+| 百万像素 | 输出 |
+|---|---|
+| 0.2 | 608 × 352 |
+| 0.3 | 736 × 416 |
+| 0.4 | 864 × 480 |
+| 0.5 | 960 × 544 |
+| 0.6 | 1056 × 608 |
+| 0.7 | 1152 × 640 |
+| 0.8 | 1216 × 672 |
+| 0.9 | 1280 × 736 |
+| **0.98** | **1344 × 768** ← 我们当前 |
+| 1.0 | 1376 × 768 |
+| 1.2 | 1504 × 832 |
+| 1.5 | 1664 × 928 |
+| 1.8 | 1824 × 1024 |
+| 2.0 | 1920 × 1088 |
+
+竖屏就把两个数对调。Pixaroma 那 19 条全部跑 **480×864 ≈ 0.41MP** —— 比我们低一半以上。
+
+## 5. 参考输入的容量和标签
+
+> up to **9 reference images, 3 reference videos**（每个可带自己的配套音轨）,
+> and **3 standalone reference audio clips**
+>
+> reference the inputs by tag, **in the exact order they were connected**,
+> for example `<Picture 1>`, `<Video 1>`, `<Audio 1>`
+
+`<Video N>` 和 `<Audio N>` 是真实存在的标签，不只有 `<Picture N>`。
+
+## 6. Ref2VA 对措辞极度敏感
+
+> Ref2va's output is **very sensitive to prompt wording**; matching the reference tags precisely
+> and **being explicit about which reference drives which part of the shot** tends to work best.
+
+## 7. 模型选择（参考2 的 note 里带说明）
+
+| 文件 | 官方/作者标注 |
+|---|---|
+| `qwen3vl_32b_heretic_minimax_h3_nvfp4` | **very fast speed** |
+| `qwen3vl_32b_h3_ultra_uncensored_heretic_int8_convrot` | 另一个 heretic 变体（ethanfel），参考1 在用 |
+| `minimax_h3_video_vae_int8_convrot` | **x1.5 faster** |
+| `minimax_h3_fl2va_pruned_int8_convrot` | for low vram and low ram systems |
+| `taeh3.safetensors` | 预览用的 tiny VAE（配 `ModelPreviewOverrideKJ`）|
+
+## 8. 其它节点技巧
+
+- **参考1**：`PathchSageAttentionKJ` 的 `allow_compile=true`（我们是 false）；
+  另挂 `ModelPatchTorchSettings [true]`
+- **参考1**：`VAELoaderKJ` 加载 tiny VAE + `ModelPreviewOverrideKJ [1024, 80, true, 240, 12]`
+  → 采样过程中出实时预览
+- **参考2**：解码后接 `RTXVideoSuperResolution ["scale by multiplier", 1.5, "ULTRA"]`
+  → **低分辨率生成 + RTX 超分**。这是"480×864 也能出成片"的补全环节
+- **参考2**：用 `MiniMaxH3TurboLoRA` + `MiniMaxH3TurboSampler`（专用节点，
+  `low_vram` 开关），不是普通 `LoraLoaderModelOnly`
+- **参考2 / 参考3 的 Spectrum 参数和我们完全一致**（degree 4 / warmup 5 / system_ram）
+  —— Pixaroma 的 `degree 1 / warmup 1 / vram` 才是三比一的少数派
+
+---
+
+# 二、参考2：工程化长文流派
+
+这是我之前给你的 `Colors LOCKED` / `never continuous legible travel` / `key poses, smear frames,
+impact frames` / `held frames` / `⚠️STRICTLY N shots` 的**真实出处**。全文约 4600 字符，15 秒 7 镜。
+
+## 段落顺序
+
+```
+Multi-shot (7 shots).
+<角色1名> (角色定位) — <外貌逐项>；<服装>；<携带物> — <这个角色的专属颜色>
+<角色2名> (角色定位) — …
+Style: …
+World: …
+⚠️This video has STRICTLY 7 shots — do not add extra shots.⚠️
+SPATIAL LAYOUT (…): …
+180° LINE: …
+⚠️ACTION VECTORS: (V1, SHOT 2) … (V2, SHOT 3) …
+⚠️Continuity across cuts: …
+[SHOT 1] · <镜头名> (~2s): …
+[SHOT 2] · <镜头名> (~2s): …
+…
+Environmental activity: …
+Audio: …
+<技术保障条款一大段>
+15 seconds. 16:9.
+```
+
+## 值得抄的十件事
+
+**① 开头一句话声明镜头数**：`Multi-shot (7 shots).` 然后中间再用 ⚠️ 强调一次。
+
+**② 角色块用破折号分三段**：
+```
+TSUBAME (Spear Girl) — 17, lean and small, sharp jawline, short black bob with long straight bangs,
+fierce dark-teal eyes; sleeveless white gi top with teal trim, black shorts, bandaged forearms and shins,
+split-toe boots; carries a two-meter spear with a slim leaf-blade head
+— the spearhead and her motion trails read cyan.
+```
+`名字(定位) — 年龄+体型+五官+发型+眼睛; 服装; 携带物 — 专属颜色`。分号分层，破折号收口。
+
+**③ 每个角色分配一个专属颜色，然后锁死**：
+```
+Fighter colors LOCKED: Tsubame = cyan (spear-tip glint, afterimage trails, speed-lines),
+                       Garan = ember-orange (molten glow in every floor tear, rubble rim-light).
+```
+不是笼统锁色，是**颜色 = 角色 = 这个颜色出现在哪三个地方**。
+
+**④ 发光写成双色**：`All glows two-tone — white-hot core, saturated colored rim, trailing dust and embers that linger after each impact.`
+
+**⑤ 环境为角色配色服务**：
+```
+World: desaturated slate-grey shattered arena … so both hues detonate off it.
+The nearest glow is the key light — cyan rim on her, orange bounce on him and the rock.
+```
+背景降饱和是**为了让两个角色的颜色炸出来**，并且指定**最近的光源就是主光**。
+
+**⑥ 用罗盘方位建立空间，再映射到屏幕左右**：
+```
+SPATIAL LAYOUT (MAIN VIEW = from the SOUTH side, top-down axis west–east;
+screen-left = west, screen-right = east):
+Tsubame starts at the west edge facing east (screen-right, toward Garan);
+Garan stands ~18m east of her, facing west (screen-left, toward her).
+180° LINE: camera stays on the south side all clip — Tsubame on screen-left,
+Garan on screen-right, no swapping.
+```
+**这是最强的空间控制手段**。先定一个绝对坐标系，再声明屏幕方向对应关系，最后明写轴线不能越。
+
+**⑦ 动作矢量化**：
+```
+⚠️ACTION VECTORS:
+(V1, SHOT 2) Garan hurls a car-sized slab two-handed, east→west (screen right→left),
+             at Tsubame's center mass — she slides flat under it; it detonates west of her.
+(V4, SHOT 5) Garan's right backhand sweeps east→west at her head … one shard grazes her LEFT cheek.
+```
+`(编号, 属于哪个镜头) 施动者 动作 方向(绝对→屏幕) 目标 — 结果`。
+
+**⑧ 连续性写成契约，并追踪一个具体的伤口**：
+```
+⚠️Continuity across cuts: designs, colors, and arena damage stay identical and only progress,
+never reset — the left-cheek cut appears in SHOT 5 and persists bleeding a thin line
+through SHOTS 6–7; rubble and craters only accumulate.
+```
+`只累积，绝不重置` + **一个可验收的具体标记**。
+
+**⑨ 每个镜头起名字 + 近似时长**：
+```
+[SHOT 1] · Anticipation (~2s): …
+[SHOT 3] · The scatter (~2.5s): …
+[SHOT 4] · The staircase (~2.5s, the money shot): …
+[SHOT 6] · The gate (~1s): …
+[SHOT 7] · The pierce (~3.5s): …
+```
+用 `(~2s)` 近似时长而不是精确时间戳。`the money shot` 直接标出重点镜头。
+
+**⑩ 结尾一大段技术保障条款**：
+```
+The two fighters remain two distinct, separate bodies in every frame, even at full contact.
+Faces, hands, and designs stay on-model start to finish — five-fingered hands with clean
+articulation, correct limb topology, character designs identical shot to shot.
+The spear keeps its slim leaf-blade shape and full two-meter length in every frame.
+… No watermark, no on-screen text, no subtitles.
+15 seconds. 16:9.
+```
+**逐项点名容易崩的东西**：两个身体不要融、五根手指、四肢拓扑、道具长度形状。最后报时长和比例。
+
+## 其它细节
+
+- **作画流程用箭头写**：`drawn as anticipation pose → smear → landing pose`
+- **运镜用「allowed」授权**：`Camera: animation camerawork — snap-zooms, speed-lines, orbits,
+  held frames, hit-stops all allowed.` —— 给权限而不是下命令
+- **明确排除写实**：`non-photoreal — no pore-level skin, no 3D volumetric render feel`
+- **质量强调**：`film-grade sakuga action`、`Real mass everywhere: slabs are tons, not props`
+- **静音设计写进镜头里**：`All sound — music and SFX — drops dead silent for the half-beat
+  of the pierce; one deep concussive boom resolves it`
+- **自定义段名照样能用**：`Environmental activity:` / `Audio:` 不是官方字段名
+
+---
+
+# 三、参考3：官方六段式完整版
+
+10 秒 8 镜，`Gintama` 画风的理发喜剧。**这是六段式写得最标准的一份。**
+
+## 值得抄的九件事
+
+**① `<Subject N>` 不止用来定义角色**：
+```
+<Subject 3> is the black salon tarp (cape) worn by <Subject 1> to protect her outfit.
+<Subject 4> is the hair salon interior, featuring a white-tiled floor, a large salon mirror …
+<Subject 5> is the final disastrous hairstyle: a massive, round, puffy red afro.
+<Subject 6> is a white salon towel used to wrap <Subject 1>'s head after the shampoo.
+```
+**把"最终结果状态"也定义成一个 Subject**（`<Subject 5>` = 最后那个爆炸头）——
+转变有了明确目标，模型不用自己猜要变成什么。
+
+**② `<Picture 1>` 明写是什么类型的图**：
+```
+<Picture 1> is the uploaded character reference sheet for "Captain Marine",
+displaying front and back views, outfit details, and accessory close-ups.
+```
+是**设定集**而不是单张立绘，就明说是设定集。
+
+**③ 明写身体被遮住的部分**：
+```
+In this video, her torso is concealed by a classic black salon tarp (<Subject 3>),
+leaving only her head, neck, and shoulders visible.
+```
+免得模型去编参考图里被挡住的部分。
+
+**④ summary 一句话包全**：
+```
+[reference generation] The target is a 10-second static-camera anime-style video depicting
+<谁>(<Subject 1>) <做什么> at <哪里>(<Subject 4>) from <谁>(<Subject 2>).
+The sequence follows <过程>, culminating in <结局>, triggering <反应>.
+The character design is entirely sourced from <Picture 1> and adapted to the Gintama animation style.
+```
+时长 + 机位 + 画风 + 人 + 地 + 事 + 结局 + 画风来源，一句话。
+
+**⑤ retention_analysis 每个 Subject 一行 + 破折号 + 理由**：
+```
+<Picture 1>: fully_preserved – used as the direct visual model for <Subject 1>'s hair color,
+             eye shape, facial features, and ribbon accessories.
+<Subject 2>: attribute_transfer – The hairdresser is a new character, but her cute, energetic
+             aesthetic is inferred from the target anime style.
+<Subject 5>: attribute_transfer – The afro is a completely new stylistic element, but its
+             vibrant red color is fully retained from <Subject 1>'s original hair.
+```
+`fully_preserved` = 照抄；`attribute_transfer` = **新造的，但继承某项属性**（写明继承哪一项）。
+
+**⑥ 画风名字重复三次**：summary、retention_analysis、detailed_description 各一次
+（`the distinctive anime style of Gintama`）。
+
+**⑦ 动漫符号语言直接命名**：
+```
+eyes shrunken into tiny white dots
+dramatic straight-line shadows crossing her face
+A sweat drop falls from her temple
+```
+这些是动漫特有的表情符号，**直接写出来模型就画**，不用绕着描述。
+
+**⑧ 拟声词用引号包起来写进正文**：
+```
+the motion sped up with a comical "bambambam" effect
+crisp "snip-snip" scissors · the rhythmic "swoosh" of the brush
+a swift, airy "whoosh" · a comedic, deep "boing" or cartoonish spring sound effect
+a loud, resonating "record scratch"
+```
+
+**⑨ `non_diegetic_music` 写成一条音乐叙事线**：
+```
+开头：cheerful, upbeat acoustic guitar strumming a light, jazzy melody typical of a Gintama slice-of-life scene
+中段：As the timelapse progresses, the music speeds up into a frantic, looped chase-like rhythm
+转折：At exactly the moment the towel is removed and the afro is revealed, the music abruptly cuts off,
+      leaving only the diegetic "boing"
+收尾：followed by a single, sad, out-of-tune trombone slide (wah-wah) that fades into silence for the final second
+```
+**起 → 加速 → 在某个精确画面事件上切断 → 换成什么 → 怎么收**。
+Pixaroma 那 19 条全是 `N/A`，但要配乐就该这么写。
+
+## 其它细节
+
+- **台词格式第三种**：`(S1): <d>[Japanese] よろしくお願いします！</d>` ——
+  说话人标签在前 + 冒号 + `<d>`，不写 `says:`
+- **显式声明机位不动**：`The camera does not move, but the action unfolds rapidly.`
+- **可以要求快放**：`the footage cuts into a fast-motion timelapse`
+- **括号补画外空间**：`(implied over the sink of <Subject 4>)`
+- **明确要求定格结尾**：`The video freezes on this image of utter, unhappy shock.`
+- **`[Shot 1]` 不带时间戳，之后每个都带** `At 00:0X.X00`
+
+---
+
+# 四、参考1：官方模板 —— 精简 Ref2VA + 中文台词 + 烧字幕
+
+**六段式可以只写四段。** 参考1 没有 `subject_definitions`，没有 `retention_analysis`：
+
+```
+How the reference pictures align with the target video — …
+
+summary:
+[reference generation] …
+
+detailed_description:
+[Shot 1] …
+
+overall_soundscape:
+…
+
+non_diegetic_music:
+…
+```
+
+Subject 在 Shot 1 里**内联定义**：
+```
+<Subject 2>, a blonde girl wearing a large metallic robot-style hat with a blue coat and grey scarf,
+stands in the left foreground.
+```
+
+## 值得抄的五件事
+
+**① Ref2VA 的对齐句写法**（和 I2VA 那句不同）：
+```
+How the reference pictures align with the target video — <Subject 1> (from [Shot 1]) aligns with
+the 0.00-second mark of the target video; <Subject 2>, <Subject 3>, and <Subject 4>
+support character appearance and scene environment throughout.
+```
+**只有一个 Subject 对齐到时间点，其余明写"全程支持外貌和环境"** —— 这比 Pixaroma
+的"后面的图一个字都不提"更明确，而且是官方模板的写法。
+
+**② 烧字幕**：
+```
+<d>[Chinese] 我才是火屬性最佳擊破. </d> Her tiger ears twitch slightly as she speaks,
+the bottom show words "I'm the superior fire stun character."
+```
+`the bottom show words "…"` —— **要屏幕下方出字幕就这么写**。每句台词后面跟一条。
+
+**③ 繁体中文台词能用**，`[Chinese]` 标签照写。
+
+**④ 次级运动绑到说话上** —— 和 Pixaroma 独立收敛到同一条：
+```
+Her tiger ears twitch slightly as she speaks
+Her red twin-tails sway slightly with her words
+```
+
+**⑤ 运镜用官方受控词表**：
+```
+the camera smoothly pushes in with small amplitude toward <Subject 1>
+```
+`small amplitude` 是受控词（幅度只有 small/large 两档）。
+
+**⑥ 说话人标签第四种写法**：
+```
+<Subject 3> (S1) says with an argumentative tone: <d>[Chinese] … </d>
+<Subject 1> (S3) calmly says: <d>[Chinese] … </d>
+```
+`(S1)/(S2)/(S3)` 按**角色**分配，不是按出场顺序重置。
+
+---
+
+# 五、四个流派的对照
+
+| | Pixaroma 19 条 | 参考1 官方 | 参考2 工程化 | 参考3 六段式 |
+|---|---|---|---|---|
+| 任务 | ref2va 管线 + 基础模式提示词 | ref2va | i2v | ref2va |
+| 字符数 | 2300～3900 | ~2000 | **~4600** | ~4400 |
+| 镜头数 | 3～7 / 15s | 6 / 12s | 7 / 15s | 8 / 10s |
+| 镜头标记 | `[Shot N] At 00:SS.mmm` | 同左 | `[SHOT N] · 名字 (~2s)` | 同左一 |
+| 台词 | `Name (S1) <状态> and says: <d>` | `<Subject N> (S1) says with an X tone: <d>` | 无台词 | `(S1): <d>` |
+| 运镜 | 全 Static + hard cut | 官方受控词 `small amplitude` | 全部授权 `all allowed` | `camera does not move` |
+| 锁色 | 只用 6 个基础色贴名词 | 无 | `Fighter colors LOCKED: 角色=色(三处)` | 无 |
+| 连续性 | `keeps` / `still` / `back to` | 无 | `⚠️Continuity` 契约 + 追踪伤口 | 无 |
+| 空间 | `from the right side of the screen` | `left/right foreground` | **罗盘方位 + 180° 线 + 动作矢量** | 无 |
+| 配乐 | **全部 N/A** | 一句话风格 | `Audio:` 自定义段 | **完整音乐叙事线** |
+| 结尾 | `… through the end.` | 无 | 技术保障条款 + `15 seconds. 16:9.` | `The video freezes on this image` |
+
+**怎么挑**：
+
+- **单人对话、要稳** → Pixaroma 那套（三句一镜 + `only` + 数量词 + `through the end`）
+- **多人打斗、要空间不乱** → 参考2 那套（罗盘方位 + 180° 线 + 动作矢量 + 连续性契约）
+- **要换画风 / 要变身 / 有明确结局** → 参考3 那套（把结果状态定义成 `<Subject N>`）
+- **要中文台词 + 字幕** → 参考1 那套（`the bottom show words "…"`）
+
+
+==============================================================================
+第 4 部分 / 共 5 部分   ——   可直接改的模板
+来源：h3-prompt-practical/references/templates.md   （3504 字符）
+==============================================================================
+
+# 可直接改的模板
+
+三个模板对应三种最常用的情况。方括号里是要替换的内容。
+
+---
+
+## A. I2VA —— 让这张图动起来
+
+图就是第 0 帧，开场构图锁死。**不要在这个模式下要求换画风或三维体积。**
+
+```
+对于目标视频，在目标视频的 0.00 秒处，完全参考 <Picture 1>（来自 [镜头1]）。
+
+综合多模态描述：[镜头1] [画风：点名一部作品]。[主体描述：<Picture 1> 里那个…保持原样，外貌逐项列出]。[光影一句]。[运镜一句]。
+
+[0s-X.Xs] [具体动作，一格一件事，不提声音]
+
+[X.Xs-Y.Ys] [说话人描述]（说话人1）说：<d>[Chinese] [台词]</d> [说完的反应]
+
+[Y.Ys-Z.Zs] [收尾动作]
+
+整体音景：[环境音 + 动作音，不写人声]
+
+非画内音乐：[编制、速度、强弱变化。不写情绪词]
+```
+
+---
+
+## B. Ref2VA —— 用这个角色拍一段戏
+
+图只定义角色，不是首帧。**要换画风、要体积、要自由构图就用这个。**
+
+```
+subject_definitions
+<Picture 1> 是角色参考图。
+<Subject 1> 是图中的[角色]，取自 <Picture 1>：[外貌逐项]。
+<Subject 2> 是[道具]：[外观]。
+<Subject 3> 是[环境]。
+
+summary
+[reference generation] [时长]，[镜头数]，[点名一部作品]的电视动画画风。[一句话剧情]。
+
+retention_analysis
+<Picture 1>: fully_preserved —— 直接作为 <Subject 1> 的发色、瞳色、五官、配色的视觉模型。
+<Subject 1>: fully_preserved —— 面部特征、发型、身体比例全部保留。
+<Subject 2>: fully_preserved —— [关键特征]全部保留。
+<Subject 3>: attribute_transfer —— [说明它是新造的]。
+
+detailed_description
+本片是[点名作品]那种电视动画画风：[三到四个具体特征]。Colors LOCKED：[部位=颜色，逗号分隔]。
+
+作画方式：动作画成关键姿势加中割，快的地方用拖影帧，never continuous legible travel。起手前先反向蓄一下，到位后过冲再回弹。每个动作到位之后画面停住一拍再进下一个。[头发/饰品/衣袖]有持续的次级摆动，主体停下之后还会多晃两三下才停。
+
+⚠️本片严格[N]个镜头，[不要增加镜头 / 全片一镜到底]。⚠️
+
+[镜头1] [景别]，[背景]，[运镜一句]。
+
+[0s-X.Xs] [动作]
+
+[X.Xs-Y.Ys] [说话人描述]的 <Subject 1> (S1) 说：<d>[Chinese] [台词]</d>
+
+...
+
+overall_soundscape
+[环境音 + 动作音]
+
+non_diegetic_music
+[编制、速度、强弱变化]
+```
+
+---
+
+## C. 一镜到底 + 中途开口
+
+台词不能用时间戳控制，只能靠**时间窗口**。静默段每格都要写满具体动作，
+否则模型演完就提前开口。
+
+```
+⚠️本片严格只有一个镜头，全片一镜到底，不要增加镜头，不要切镜，不要转场，不要黑帧。⚠️
+
+[镜头1] [景别]，[背景]，[运镜一句]。
+
+[0s-2.0s] [动作一]。[动作二]。动作停住，画面定格一拍。
+
+[2.0s-3.0s] [动作三]。定格一拍。
+
+[3.0s-4.5s] [动作四——画成两个关键姿势加一张中割，中间不做连续插值]。停住。
+
+[4.5s-6.5s] [说话人描述]（说话人1）说：<d>[Chinese] [台词]</d> [说完的反应]，画面定格一拍。
+
+[6.5s-8.0s] [过渡动作]
+
+[8.0s-10.0s] [收尾——起手、中途、到位三个关键姿势，中间用一张拖影帧带过]。最后一帧定住。
+```
+
+**静默段的写法**：只描述嘴唇形状（「嘴唇轻轻抿在一起」「保持抿着的形状不动」），
+**一个字都不提声音**。想压住片头人声，就在 `[0s-…]` 给一个具体的非人声事件
+（指甲刮过木面、布料窸窣之类），并在 `整体音景` 里把它写在最前面。
+
+---
+
+## D. Ref2VA 管线 + 基础模式提示词（19 条实测出片的写法）
+
+节点用 `MiniMaxH3ReferenceToVideo`，挂 2～3 张图：Picture 1 是要钉住的构图，
+Picture 2/3 供画风和角色长相 —— **它们在正文里一个字都不提**。
+
+15 秒 / 24fps / 480×864 竖屏。全静态镜头，全硬切。
+
+```
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+
+integrated_multimodal_description: [Shot 1] 2D-animated anime, cinematic, Static Shot, [景别] of [角色名], [此镜头看得见的外貌一两项], [动作一句]. [Shot 2] At 00:0X.X00, Static Shot, hard cut to [景别] of [角色名], [外貌一两项], [动作]. [角色名] (S1) [表情/姿态/嗓音状态], and says: <d>[Chinese] [台词]</d> [Shot 3] At 00:0X.X00, Static Shot, hard cut to … [Shot 6] At 00:11.X00, Static Shot, hard cut to … [收尾动作].
+
+overall_soundscape: [一整段，不分行。每个声音绑一个具体动作，串成 350～660 字符]
+
+non_diegetic_music: N/A
+```
+
+**必须照做的几条**：
+
+- 首行锚点一个字不改（19/19 完全一致）
+- 每个镜头**开头点一次角色名**，只补这个景别看得见的外貌项，不复制角色卡
+- 每个镜头**一句话**，不是一段
+- `non_diegetic_music` 就写 `N/A`
+- 不写运镜词，不写 `No …` 否定句
+- 台词把"怎么说"写进句子：`in a defeated tired breathless voice, soft and out of air:` /
+  动词分开用 `says:` / `yells:` / `whispers`
+
+**镜头时间点**：第一刀 1.6～6 秒，中间每 2～3 秒一刀，最后一刀 11～12 秒，末镜头留 3～4 秒。
+
+---
+
+## 时长与静默的配比
+
+| 片长 | 可承受的静默 | 台词容量 |
+|---|---|---|
+| 4–5 秒 | ≤ 1.5 秒 | 一句短的 |
+| 10 秒 | ≤ 3 秒 | 二到三句 |
+| 15 秒 | ≤ 4 秒 | 约 20 个词 |
+
+静默占比超过 40% 就会开始被拉扯 —— 模型倾向于避免 dead air，会把台词往前拽。
+
+---
+
+## 出问题时的排查顺序
+
+1. **画面糊 / 造型崩** → 先查 **LazyCache 跳步数**和**步数**，不要先改提示词
+2. **音频是噪声** → 查步数（4 步必炸）
+3. **片头有人声** → 数一下提示词里出现了几次「没有声音」类的否定句
+4. **台词时间不对** → 查静默段动作够不够、静默占比是否超过 40%
+5. **配色漂移** → 加一行 `Colors LOCKED：`
+6. **像 Live2D** → 加 `never continuous legible travel` + 定格 + 关键姿势 + 次级摆动
+7. **五官崩成怪物** → 提示词是不是超过 1500 字、主体描述是不是被挤到后面去了
+8. **要体积却一直很平** → 你是不是在 I2VA 下用平面插画当首帧（换 Ref2VA）
+
+
+==============================================================================
+第 5 部分 / 共 5 部分   ——   每条结论的实测记录
+来源：h3-prompt-practical/references/verified-log.md   （4721 字符）
+==============================================================================
+
+# 实测记录
+
+SKILL.md 里每条结论的原始数据。**没有实测支撑的推论都标了「未验证」**，不要当成事实用。
+
+环境：RTX 5070 Ti 16GB / 31GB RAM，ComfyUI 0.31.0，
+`minimax_h3_fl2va_pruned_int8_convrot` + `qwen3vl_32b_minimax_h3_nvfp4_awq`，
+Turbo LoRA `v4_step600_ema`。
+
+---
+
+## 中文结构标记有效
+
+**I2VA，全中文提示词**，`[镜头2] 在 00:02.900，镜头切至她眼睛与彼岸花的特写`：
+
+- 帧间差检出切镜在 **2.875s**（要求 2.900s，误差 0.025s < 1 帧）
+- 切后画面就是「眼睛 + 彼岸花 + 流苏 + 面具耳朵」
+- 「镜头以小幅度、慢速推近」→ 主体确实缓慢变大
+- 音轨存在（32000Hz 立体声）
+
+冷跑/热跑两版逐项一致（切镜差值 69.5 / 69.1，平均帧间差 4.87 / 4.86），确认同 seed 复现。
+
+---
+
+## `<Picture N>` 是代码硬编码
+
+`comfy/text_encoders/minimax.py:159`：
+
+```python
+add_text("<Picture %d>: " % counters["image"])
+```
+
+标签由 tokenizer 拼在视觉块前。同文件头部注释：
+
+```
+The H3 presentation is NOT chat-templated: token ids are raw prompt/label text
+(no special tokens) with explicit vision blocks spliced in:
+  fl2va:  "<Picture 1>: " <vision block> ["<Picture 2>: " <vision block>] <prompt>
+  ref2va: image -> "<Picture i>: " <vision block>
+          audio -> "<Audio j>: "              (audio never enters Qwen)
+```
+
+`nodes_minimax_h3.py` 里只有 `clip.tokenize(prompt)`，**搜不到任何对字段名/`[Shot`/`<d>` 的处理**。
+
+### 占位符不能进图生模式
+
+前端把引用芯片序列化成 `__MINIMAX_H3_REF_1__`，而后端解析它的 `_resolve_reference_prompt`
+**只在参考模式路径上调用**（`nodes.py:681`）。图生模式原样送进模型 → 首帧引用失效。
+
+同一份工作流、参数逐项相同、只有提示词差一处：
+
+| | 首行 | 首帧与输入偏差 |
+|---|---|---|
+| 00057 | `完全参考 <Picture 1>` | **4.83**（引用有效）|
+| 00058 | `完全参考 __MINIMAX_H3_REF_1__` | **14.49**（引用失效）|
+
+---
+
+## 台词时机
+
+### 时间戳无效
+
+`在 00:01.300，…（说话人1）说：` —— 官方全部示例中台词从不带时间戳，
+HF discussion #47 明确「no mechanism for timing dialogue within shots… no timestamps,
+silence markers, pauses, or beat markers」，RunDiffusion 指南同样确认。
+
+实测：写 1.3 秒、写 3 秒，都在 0 秒开口。
+
+### 时间窗口有效但不精确
+
+改用 `[0s-2.6s]` / `[2.6s-4.5s]`（来自 MiniMax IT2V 系统提示词，官方 GUIDE 里没有）：
+
+- 台词从 0 秒推到约 **1 秒** —— 生效但不到位
+- 静默段只有四个动作，模型约 1 秒演完就开口
+- 静默段拆成三个更细的窗口、每格给具体动作后仍在 1 秒左右
+
+### 片长是关键
+
+4.46 秒的片子里要求 2.6 秒静默（**58%**）→ 时好时坏。
+同样 2.6 秒放进 10.1 秒片子（**26%**）→ 时间对上了。
+
+社区密度参考：每 15 秒约 20 个词、每句约 10 个词。
+
+---
+
+## 片头人声
+
+### 不是固有瑕疵，但很常见
+
+判据：前 100ms 能量 ÷ 紧随其后 400ms 能量，比值 > 3 记为有。
+**55 段成片里 26 段有**，横跨三天、不同提示词、不同 seed、15s/9.4s/4.5s 三种时长。
+
+性质：峰值在第 **20 毫秒**、撞满刻度（有几段到 1.0+ 削顶）、
+过零率 **0.018**、频谱重心 **1.8kHz** —— 有基频，是人声不是数字咔哒声。之后立刻转静音 0.5 秒。
+
+### 否定句会招来它
+
+同一份提示词，只改声音相关否定句的数量：
+
+| 「没有声音／不出声／没有呼吸声」次数 | 结果 |
+|---|---|
+| 1 次（两分镜版） | 没有怪叫 |
+| 1 次（时间窗口 v1） | 没有怪叫 |
+| **4 次**（时间窗口 v2） | **怪叫回来** |
+
+`整体音景` 里的「少女的一次浅呼吸」也是同一类问题 —— 那是提示词里唯一主动要求的人声。
+
+### 社区有同类报告且无解
+
+[Comfy-Org/ComfyUI#15283](https://github.com/Comfy-Org/ComfyUI/issues/15283)
+「MiniMax H3 audio sounds like a blown microphone」：内容和时间点都对、只是声音坏掉，
+**"changing the seed sometimes avoids it entirely"**，至今无维护者回复、无根因、无解决方案。
+
+---
+
+## 画质「糊」的真正原因是 LazyCache
+
+跳步数和首帧与输入的偏差**一一对应**，六次无例外：
+
+| 时刻 | LazyCache 跳步 | 成片 | 首帧偏差 | |
+|---|---|---|---|---|
+| 10:07:37 | 2/8 | 00056 | 13.87 | 糊 |
+| **10:30:15** | **1/8** | **00057** | **4.83** | **干净** |
+| 10:39:36 | 2/8 | 00058 | 14.49 | 糊 |
+| 10:45:53 | 2/8 | 00059 | 13.92 | 糊 |
+| 10:49:23 | 2/8 | 00060 | 14.11 | 糊 |
+| 10:57:57 | 2/8 | 00061 | 13.92 | 糊 |
+
+偏差是**双峰**的（4.7～4.8 vs 13.8～14.5，中间没有过渡），说明是二值开关：首帧锚点要么钉住要么完全没钉住。
+8 步里跳 2 步 = 砍掉 25% 采样，锚点压不住。
+
+LazyCache 自己的官方描述：「A homebrew version of EasyCache… Overall works **worse** than EasyCache」。
+社区的 H3 工作流用 `SpectrumApplyMiniMaxH3`（`comfyui-spectrum-minimax-h3`）替代它，
+参数带 `audio_blend_weight=0` —— **音频完全不做预测跳步**，只加速画面。
+
+---
+
+## 步数
+
+4 步 → **全片音频变噪声**：峰值 0.411（正常 0.9+）、频谱平坦度 0.289
+（正常人声/乐音 <0.15，白噪声接近 1）。日志：`LazyCache - skipped 0/4 steps`。
+
+Turbo LoRA 可用区间 4–8 步，**4 步是下限**，作者称 6–8 明显好于 4。**音频比画面更吃步数。**
+
+社区三份 H3 工作流的配置：
+
+| | 步数 | 调度器 | Turbo LoRA | SigmaShift | 加速 |
+|---|---|---|---|---|---|
+| 参考1 (ref2va) | **20** | simple | **不用** | — | 无 |
+| 参考2 (fl2va) | 8 | **beta** | 用（专用节点）| 12/3 | Spectrum |
+| 参考3 (ref2va) | **18** | simple | **不用** | 12/3 | Spectrum |
+
+---
+
+## 首帧缩放
+
+官方 `_resize` 固定走 lanczos。lanczos 有负瓣，硬边线稿上留下过冲/下冲；
+居中裁切后缩放倍率接近 1（实测 0.818），振铃正好落在输出像素尺度上 ——
+输入图上几乎看不出来（色边 5.89 vs 5.92），**VAE 一编码就放大成彩色描边**。
+
+外部预处理成画布尺寸后（节点内不再缩放），只留滤波方式一个变量：
+
+| 最后一步 | 输入色边 | 成片色边 | 首帧偏差 |
+|---|---|---|---|
+| lanczos | 5.89 | **7.30** | 14.65 |
+| **BOX 面积平均** | 5.92 | **4.39** | **5.27** |
+| 降带宽后再 lanczos | 5.65 | **6.79** | 14.37 |
+
+带宽最低的第三个照样脏 → **不是高频的锅，是 lanczos**。
+
+官方默认的拉伸看着干净（色边 5.07）是因为横向压到 0.667，倍率够小把振铃抹掉了 —— 代价是变形。
+
+⚠️ **但这个量在跨提示词/跨 seed 时不可比**：同一份代码跑出过 3.63 也跑出过 7.19。
+色边主要由采样阶段决定（见 LazyCache 那节），预处理只是次要因素。
+
+---
+
+## 首帧比例
+
+`aspect_ratio=auto` + 居中裁切，11 种源图比例实测：
+
+```
+源图比例 0.333 ~ 3.000
+旧行为（锁 16:9 + 拉伸）最坏形变 437.5%
+auto + 等比裁切               全部 0.0%
+```
+
+⚠️ `resolution=custom` 时 `aspect_ratio` **完全失效** —— 自定义宽高直接生效。
+
+---
+
+## VAE 不是色边的来源
+
+单独跑一次编码→解码，不采样：色边 **5.54 → 5.70**，几乎不加。
+
+---
+
+## 未验证的部分
+
+- 中文写的**首行对齐指令**在 L2VA 下是否有效（I2VA 下验过，首帧锚住了）
+- 时间窗口标记 `[0s-2.6s]` 和 `[Shot N]` 混用是否有先例（官方 GUIDE 里只有后者）
+- 「点名一部作品」在中文片名下是否和英文片名等效
+- Ref2VA 里把画风单开成 `<Subject N>` 的实际效果强度

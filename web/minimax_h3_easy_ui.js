@@ -1225,12 +1225,39 @@ function lintFingerprint(prompt, seconds) {
     return `${seconds} ${prompt}`;
 }
 
+/**
+ * 把参考模式的 __MINIMAX_H3_REF_N__ 换成后端最终会拼出来的真标签。
+ *
+ * 参考模式下 buildRuntimePrompt 故意写占位符，由后端 _resolve_reference_prompt
+ * 解析——这是**正确**的流程。校验必须先做同样的替换，否则每条参考模式的提示词
+ * 都会被误报成「含占位符」。
+ *
+ * 标签顺序照抄后端：图片先按顺序 <Picture 1..N>，然后视频 <Video 1..N>，
+ * 最后音频 <Audio 1..N>。
+ */
+function resolveRefPlaceholders(prompt, runtimeLinks) {
+    const counters = { image: 0, video: 0, audio: 0 };
+    const tagByIndex = new Map();
+    for (const kind of ["image", "video", "audio"]) {
+        runtimeLinks.forEach((link, i) => {
+            const t = String(link.media_type || "image").toLowerCase();
+            if (t !== kind) return;
+            counters[kind] += 1;
+            const name = kind === "video" ? "Video" : kind === "audio" ? "Audio" : "Picture";
+            tagByIndex.set(i + 1, `<${name} ${counters[kind]}>`);
+        });
+    }
+    return String(prompt || "").replace(/__MINIMAX_H3_REF_(\d+)__/g,
+        (m, n) => tagByIndex.get(Number(n)) ?? m);
+}
+
 function runLint(node) {
     const strip = node.__h3LintStrip;
     if (!strip) return;
     let prompt = "";
     try {
-        prompt = buildRuntimePrompt(node, normalizeLinks(node));
+        const links = normalizeLinks(node);
+        prompt = resolveRefPlaceholders(buildRuntimePrompt(node, links), links);
     } catch (err) {
         prompt = String(getWidget(node, "prompt")?.value || "");
     }

@@ -130,9 +130,15 @@ export function lintPrompt(rawText, seconds = null) {
     const scale = cn ? CN_SCALE : 1;
 
     // ===== 通用：不分流派 =====
+    // 调用方应当先把占位符解析成真标签（参考模式下写占位符是正确流程，
+    // 由后端 _resolve_reference_prompt 负责替换）。走到这里还剩占位符，
+    // 说明那条引用对不上任何一个已连接的媒体。
     if (text.includes("__MINIMAX_H3_REF_")) {
-        err("占位符", "含 __MINIMAX_H3_REF_N__ —— 只有参考模式后端解析它，"
-                     + "图生模式原样送进模型，首帧引用直接失效");
+        err("占位符", "有引用占位符没解析出来 —— 对应的媒体多半已经断开连接。"
+                     + "重新连上，或把提示词里那个 @ 引用删掉");
+    }
+    if (text.includes("__MINIMAX_H3_UNRESOLVED_REF_")) {
+        err("引用", "提示词里有指向已断开媒体的 @ 引用 —— 后端会直接报错拒绝生成");
     }
     for (const bad of ["〈Picture", "＜Picture", "<图片", "〈Audio", "＜Audio", "<视频"]) {
         if (text.includes(bad)) {

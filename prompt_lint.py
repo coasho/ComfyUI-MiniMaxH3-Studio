@@ -176,9 +176,14 @@ def lint(text, name, seconds=None):
     scale = CN_SCALE if cn else 1.0
 
     # ===== 通用：不分流派，违反就是坏 =====================================
+    # 调用方送进来的应当是**解析之后**的提示词（参考模式下写占位符是正确流程，
+    # 由 _resolve_reference_prompt 替换成真标签）。还剩占位符 = 那条引用对不上
+    # 任何已连接的媒体。
     if "__MINIMAX_H3_REF_" in text:
-        r.err("占位符", "含 __MINIMAX_H3_REF_N__ —— 只有参考模式后端解析它，"
-                        "图生模式原样送进模型，首帧引用直接失效")
+        r.err("占位符", "有引用占位符没解析出来 —— 对应的媒体多半已经断开连接。"
+                        "重新连上，或把提示词里那个 @ 引用删掉")
+    if "__MINIMAX_H3_UNRESOLVED_REF_" in text:
+        r.err("引用", "提示词里有指向已断开媒体的 @ 引用 —— 后端会直接报错拒绝生成")
     for bad in ("〈Picture", "＜Picture", "<图片", "〈Audio", "＜Audio", "<视频"):
         if bad in text:
             r.err("标签", f"出现 {bad!r} —— <Picture N>/<Audio N>/<Video N> 由 tokenizer 硬编码拼接，必须半角英文")

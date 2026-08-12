@@ -1175,13 +1175,24 @@ const LINT_DEBOUNCE_MS = 700;
 
 function attachLintStrip(node, wrap) {
     if (typeof document === "undefined") return;
+    // wrap 是 overflow:hidden 且高度由 DOM widget 定死的，编辑器默认占满整个高度。
+    // 直接 append 的话提示条会落在裁剪区外面——渲染了、有文字、display:block，
+    // 但屏幕上一个像素都看不见（实测 strip.top 比 wrap.bottom 还低 4px）。
+    // 改成纵向 flex：编辑器可收缩，提示条在同一个可见区里占自己一行。
+    const editor = wrap.querySelector(".h3-prompt-editor");
+    wrap.style.display = "flex";
+    wrap.style.flexDirection = "column";
+    if (editor) {
+        editor.style.flex = "1 1 auto";
+        editor.style.minHeight = "0";
+    }
     const strip = document.createElement("div");
     strip.className = "h3-lint-strip";
     Object.assign(strip.style, {
         display: "none", font: "11px/1.5 ui-monospace,Consolas,monospace",
         padding: "3px 6px", marginTop: "3px", borderRadius: "4px",
         background: "rgba(0,0,0,.22)", cursor: "pointer", userSelect: "none",
-        maxHeight: "120px", overflowY: "auto",
+        maxHeight: "120px", overflowY: "auto", flex: "0 0 auto",
     });
     strip.addEventListener("pointerdown", (e) => e.stopPropagation());
     strip.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });

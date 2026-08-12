@@ -217,22 +217,18 @@ def lint(text, name, seconds=None):
         if sec in sections and "\n" in sections[sec].strip():
             r.warn("换行", f"{sec} 段内有换行 —— 出片样本这一段从不换行")
 
-    # 每个 <Subject N> 的定义里必须出现至少一个 <Picture N>。有多张参考图时
-    # 写「图中的少女」模型不知道指哪一张，只能猜。官方六段式的写法是
-    # `<Subject 1> is ..., derived from <Picture 1>`，retention 里也给
-    # <Picture N> 单独列行说明它驱动了哪几项。
+    # 22 条出片样本里，多张分角度参考图时**没有一条**逐张定义并绑定 Subject。
+    # 逐张定义 + fully_preserved = 逐张点名要求复现，分镜走到那个角度就整块搬。
     defs = sections.get("subject_definitions", "")
     if defs:
-        n_pic = len(set(re.findall(r"<Picture\s+(\d+)>", defs)))
-        if n_pic > 1:
-            unbound = [m.group(1) for m in
-                       re.finditer(r"<Subject\s+(\d+)>(?:(?!<Subject\s+\d+>).)*", defs, re.S)
-                       if not re.search(r"<Picture\s+\d+>", m.group(0))]
-            if unbound:
-                r.warn("参考绑定",
-                       f"<Subject {', '.join(unbound)}> 没写明取自哪张参考图。"
-                       f"有 {n_pic} 张图时「图中的…」指哪张模型只能猜 —— "
-                       "每个 Subject 都要写「取自 <Picture N>」")
+        pics = set(re.findall(r"<Picture\s+(\d+)>", defs))
+        if len(pics) > 1:
+            r.warn("参考图定义",
+                   f"subject_definitions 里逐张定义了 {len(pics)} 张参考图。"
+                   "出片样本里多图时一张都不描述（19/19 正文只提 <Picture 1>，"
+                   "官方模板一张都不提）。逐张定义并绑 Subject 会让分镜走到那个角度时"
+                   "把参考图整块搬进画面 —— 改用基础三段式，"
+                   "正文里不出现 <Picture N> / <Subject N>")
 
     # ===== 锚点 ===========================================================
     head = text.strip().split("\n")[0].strip()

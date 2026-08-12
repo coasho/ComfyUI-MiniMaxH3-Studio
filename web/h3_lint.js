@@ -175,23 +175,20 @@ export function lintPrompt(rawText, seconds = null) {
         }
     }
 
-    // 每个 <Subject N> 的定义里必须出现至少一个 <Picture N>。有多张参考图时
-    // 写「图中的少女」模型不知道指哪一张，只能猜。官方六段式的写法是
-    // `<Subject 1> is …, derived from <Picture 1>`，retention 里也给 <Picture N>
-    // 单独列行说明它驱动了哪几项。
+    // 22 条出片样本里，多张分角度参考图时**没有一条**逐张定义并绑定 Subject：
+    //   19 条 Ref2VA 出片样本：挂 2~3 张图，正文只出现锚点句里的 <Picture 1>，
+    //                          零个 <Subject>，没有 subject_definitions
+    //   官方模板：            挂 4 张图，正文一个 <Picture> 都不提
+    //   官方六段式：          只有 1 张图（设定集），6 个 Subject 全绑那一张
+    // 逐张定义 + fully_preserved = 逐张点名要求复现，分镜走到那个角度就整块搬。
     const defs = sections.subject_definitions;
     if (defs) {
-        const nPic = new Set([...defs.matchAll(/<Picture\s+(\d+)>/g)].map((m) => m[1])).size;
-        if (nPic > 1) {
-            const unbound = [];
-            for (const m of defs.matchAll(/<Subject\s+(\d+)>[^<]*(?:<(?!Subject)[^>]*>[^<]*)*/g)) {
-                if (!/<Picture\s+\d+>/.test(m[0])) unbound.push(m[1]);
-            }
-            if (unbound.length) {
-                warn("参考绑定", `<Subject ${unbound.join(", ")}> 没写明取自哪张参考图。`
-                                + `有 ${nPic} 张图时「图中的…」指哪张模型只能猜 —— `
-                                + "每个 Subject 都要写「取自 <Picture N>」");
-            }
+        const pics = new Set([...defs.matchAll(/<Picture\s+(\d+)>/g)].map((m) => m[1]));
+        if (pics.size > 1) {
+            warn("参考图定义", `subject_definitions 里逐张定义了 ${pics.size} 张参考图。`
+                + "出片样本里多图时一张都不描述（19/19 正文只提 <Picture 1>，官方模板一张都不提）。"
+                + "逐张定义并绑 Subject 会让分镜走到那个角度时把参考图整块搬进画面 —— "
+                + "改用基础三段式，正文里不出现 <Picture N> / <Subject N>");
         }
     }
 

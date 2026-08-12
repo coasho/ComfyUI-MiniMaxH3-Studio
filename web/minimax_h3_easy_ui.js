@@ -1175,14 +1175,22 @@ const LINT_DEBOUNCE_MS = 700;
 
 function attachLintStrip(node, wrap) {
     if (typeof document === "undefined") return;
-    // wrap 是 overflow:hidden 且高度由 DOM widget 定死的，编辑器默认占满整个高度。
-    // 直接 append 的话提示条会落在裁剪区外面——渲染了、有文字、display:block，
-    // 但屏幕上一个像素都看不见（实测 strip.top 比 wrap.bottom 还低 4px）。
-    // 改成纵向 flex：编辑器可收缩，提示条在同一个可见区里占自己一行。
+    // wrap 高度由 DOM widget 定死，样式表给它 overflow:hidden + contain:size，
+    // 编辑器又是 height:100%。直接 append 的话提示条整条落在裁剪区外——
+    // 元素在、有文字、display:block，但屏幕上一个像素都看不见
+    // （实测 strip.top 比 wrap.bottom 还低 4px，超出 33px）。
+    //
+    // 不能改 wrap.style.display：ComfyUI 的 DOM widget 系统自己拿这个属性控制显隐，
+    // 设成 flex 之后会被它改回 block（实测 wrap.style.display 又变回 "block"）。
+    // 所以套一层自己的纵向 flex 容器，ComfyUI 碰不到它。
     const editor = wrap.querySelector(".h3-prompt-editor");
-    wrap.style.display = "flex";
-    wrap.style.flexDirection = "column";
+    const col = document.createElement("div");
+    col.className = "h3-editor-col";
+    col.style.cssText = "display:flex;flex-direction:column;height:100%;width:100%;min-height:0;";
+    wrap.append(col);
     if (editor) {
+        col.append(editor);                 // 从 wrap 里挪进来
+        editor.style.height = "auto";       // 盖掉样式表的 height:100%，否则挤没提示条
         editor.style.flex = "1 1 auto";
         editor.style.minHeight = "0";
     }
@@ -1200,7 +1208,7 @@ function attachLintStrip(node, wrap) {
         node.__h3LintOpen = !node.__h3LintOpen;
         renderLintStrip(node);
     });
-    wrap.append(strip);
+    col.append(strip);
     node.__h3LintStrip = strip;
     scheduleLint(node);
 }

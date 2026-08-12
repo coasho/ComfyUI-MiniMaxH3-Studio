@@ -44,7 +44,8 @@ except Exception:  # pragma: no cover
 
 for _name, _label, _fn in (("caption", "图生文反推模型", "unload_caption_models"),
                            ("voice", "音色模型", "unload_voice_models"),
-                           ("download_models", None, None)):
+                           ("download_models", None, None),
+                           ("prompt_lint", None, None)):
     try:
         _mod = __import__(f"{__name__}.{_name}", fromlist=[_name])
         _mod.register_routes()

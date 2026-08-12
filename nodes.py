@@ -472,6 +472,19 @@ def _encode_reference_audio(audio_vae, audio: dict):
     return latent, latent.shape[-1]
 
 
+def _lint_prompt(prompt, length, where):
+    """把结构校验打到控制台。查的是解析之后、真正送进 tokenizer 的那份。
+
+    前端看到的是 `@正面.png`，模型收到的是 `<Picture 1>` —— 只有这里能查到真相。
+    校验本身永远不该拖垮生成，所以整个吞掉异常。
+    """
+    try:
+        from . import prompt_lint
+        prompt_lint.log_check(prompt, length, 24, where)
+    except Exception:
+        pass
+
+
 def _resolve_reference_prompt(
     prompt: str,
     tag_by_input: dict[int, str],
@@ -589,6 +602,7 @@ def _empty_image_conditioning(bundle, prompt, width, height, length, first_frame
         images.append(image)
         keyframes.append({"resolved_frame_index": frame_count - 1, "image": image})
 
+    _lint_prompt(prompt, length, "图生/文生")
     tokens = bundle.clip.tokenize(prompt, images=images)
     conditioning = bundle.clip.encode_from_tokens_scheduled(tokens)
     if keyframes:
@@ -690,6 +704,7 @@ def _reference_conditioning(bundle, prompt, width, height, length, ref_image_siz
         len(audios),
     )
 
+    _lint_prompt(resolved_prompt, length, "参考模式")
     tokens = bundle.clip.tokenize(resolved_prompt, minimax_ref_items=ref_items)
     conditioning = bundle.clip.encode_from_tokens_scheduled(tokens)
     conditioning = node_helpers.conditioning_set_values(conditioning, {"minimax_refs": ref_blocks})

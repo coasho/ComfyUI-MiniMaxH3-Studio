@@ -1165,6 +1165,106 @@ function getInputConnection(canvas) {
 }
 
 
+// ---------------------------------------------------------------- 结构校验条
+//
+// 查的是 buildRuntimePrompt 之后的那份——@正面.png 已经变成 <Picture 1>，
+// 也就是模型真正收到的文本。编辑器里看到的不是这个，所以只能在这里查。
+// 后端同一套判据也会在送进 tokenizer 之前跑一遍并打到控制台。
+
+const LINT_DEBOUNCE_MS = 700;
+
+function attachLintStrip(node, wrap) {
+    if (typeof document === "undefined") return;
+    const strip = document.createElement("div");
+    strip.className = "h3-lint-strip";
+    Object.assign(strip.style, {
+        display: "none", font: "11px/1.5 ui-monospace,Consolas,monospace",
+        padding: "3px 6px", marginTop: "3px", borderRadius: "4px",
+        background: "rgba(0,0,0,.22)", cursor: "pointer", userSelect: "none",
+        maxHeight: "120px", overflowY: "auto",
+    });
+    strip.addEventListener("pointerdown", (e) => e.stopPropagation());
+    strip.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
+    strip.addEventListener("click", () => {
+        node.__h3LintOpen = !node.__h3LintOpen;
+        renderLintStrip(node);
+    });
+    wrap.append(strip);
+    node.__h3LintStrip = strip;
+    scheduleLint(node);
+}
+
+function scheduleLint(node) {
+    if (!node?.__h3LintStrip) return;
+    clearTimeout(node.__h3LintTimer);
+    node.__h3LintTimer = setTimeout(() => runLint(node), LINT_DEBOUNCE_MS);
+}
+
+async function runLint(node) {
+    const strip = node.__h3LintStrip;
+    if (!strip) return;
+    let prompt = "";
+    try {
+        prompt = buildRuntimePrompt(node, normalizeLinks(node));
+    } catch (err) {
+        prompt = String(getWidget(node, "prompt")?.value || "");
+    }
+    if (!prompt.trim()) {
+        node.__h3LintData = null;
+        renderLintStrip(node);
+        return;
+    }
+    try {
+        // 包里其余地方都是裸 fetch（h3_models.js / h3_api.js），这里保持一致
+        const res = await fetch("/minimax_h3_studio/lint", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt, seconds: Number(getWidgetValue(node, "seconds", 5)) || null }),
+        });
+        node.__h3LintData = res.ok ? await res.json() : null;
+    } catch (err) {
+        node.__h3LintData = null;
+    }
+    renderLintStrip(node);
+}
+
+function renderLintStrip(node) {
+    const strip = node.__h3LintStrip;
+    if (!strip) return;
+    const data = node.__h3LintData;
+    const rows = (data?.items || []).filter((i) => i.level !== "INFO");
+    if (!data || !rows.length) {
+        strip.style.display = data ? "block" : "none";
+        if (data) {
+            strip.style.color = "#4ec9a0";
+            strip.textContent = "✓ 结构校验通过";
+        }
+        node.setDirtyCanvas?.(true, true);
+        return;
+    }
+    strip.style.display = "block";
+    strip.style.color = data.n_err ? "#e06c75" : "#e0b341";
+    const head = `${data.n_err ? "✗" : "!"} ${data.n_err} 错误 / ${data.n_warn} 警告`
+        + (node.__h3LintOpen ? "  ▾" : "  ▸ 点开");
+    if (!node.__h3LintOpen) {
+        strip.textContent = head;
+    } else {
+        strip.textContent = "";
+        const h = document.createElement("div");
+        h.textContent = head;
+        strip.append(h);
+        rows.sort((a, b) => (a.level === "ERROR" ? 0 : 1) - (b.level === "ERROR" ? 0 : 1));
+        for (const it of rows) {
+            const line = document.createElement("div");
+            line.style.color = it.level === "ERROR" ? "#e06c75" : "#c9a227";
+            line.style.marginTop = "2px";
+            line.textContent = `${it.level === "ERROR" ? "✗" : "!"} [${it.rule}] ${String(it.message).split("\n")[0]}`;
+            strip.append(line);
+        }
+    }
+    node.setDirtyCanvas?.(true, true);
+}
+
 function buildRuntimePrompt(node, runtimeLinks) {
     const promptWidget = getWidget(node, "prompt");
     const fallback = String(promptWidget?.value || "");
@@ -3322,6 +3422,7 @@ function ensurePromptEditor(node) {
         }
         pushPromptHistory(node);
         syncMentionMenuToCaret(node, editor);
+        scheduleLint(node);
     });
     editor.addEventListener("compositionstart", () => {
         node.__h3PromptComposing = true;
@@ -3466,6 +3567,7 @@ function ensurePromptEditor(node) {
     editor.addEventListener("wheel", wheelHandler, { passive: false, capture: true });
     wrap.addEventListener("wheel", wheelHandler, { passive: false });
     wrap.append(editor);
+    attachLintStrip(node, wrap);
     node.__h3Editor = editor;
     node.__h3EditorWrap = wrap;
     renderEditorFromNode(node);

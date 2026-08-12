@@ -201,8 +201,17 @@ export function lintPrompt(rawText, seconds = null) {
         if (head !== ANCHOR_I2VA) err("锚点", `I2VA 锚点不是一字不差那句。\n实际：${head}\n应为：${ANCHOR_I2VA}`);
         else info("锚点", "I2VA 锚点逐字匹配");
     } else if (head.startsWith("How the reference")) {
-        if (!head.includes("0.00-second mark")) warn("锚点", "Ref2VA 对齐句里没有 0.00-second mark");
-        info("锚点", "Ref2VA 对齐句");
+        // 两种写法都对，取决于要不要把参考钉成第 0 帧：
+        //   钉    …aligns with the 0.00-second mark…   开场构图 = 那张图
+        //   不钉  …均不对齐到任何时间点，不作为任何一帧的画面内容…（只取特征和画风）
+        // 只有两者都没写才是问题 —— 那样模型不知道参考该不该进画面。
+        const pinned = /0\.00-second mark|对齐到目标视频的 ?0/.test(head);
+        const unpinned = /不对齐到|不作为任何一帧|does not align|no time alignment/.test(head);
+        if (!pinned && !unpinned) {
+            warn("锚点", "Ref2VA 对齐句既没写对齐到 0.00-second mark，也没写「不对齐到任何时间点」——"
+                        + "要不要把参考当第 0 帧，得明说一个");
+        }
+        info("锚点", `Ref2VA 对齐句（${pinned ? "钉到 0 秒，开场构图 = 参考图" : "不钉时间点，只取特征与画风"}）`);
     } else if (school !== "longform") {
         warn("锚点", "没有首行对齐句。I2VA / FL2VA / L2VA 必须有，纯 T2VA 可以没有");
     }

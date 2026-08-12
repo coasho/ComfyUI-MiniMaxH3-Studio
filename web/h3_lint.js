@@ -175,6 +175,26 @@ export function lintPrompt(rawText, seconds = null) {
         }
     }
 
+    // 每个 <Subject N> 的定义里必须出现至少一个 <Picture N>。有多张参考图时
+    // 写「图中的少女」模型不知道指哪一张，只能猜。官方六段式的写法是
+    // `<Subject 1> is …, derived from <Picture 1>`，retention 里也给 <Picture N>
+    // 单独列行说明它驱动了哪几项。
+    const defs = sections.subject_definitions;
+    if (defs) {
+        const nPic = new Set([...defs.matchAll(/<Picture\s+(\d+)>/g)].map((m) => m[1])).size;
+        if (nPic > 1) {
+            const unbound = [];
+            for (const m of defs.matchAll(/<Subject\s+(\d+)>[^<]*(?:<(?!Subject)[^>]*>[^<]*)*/g)) {
+                if (!/<Picture\s+\d+>/.test(m[0])) unbound.push(m[1]);
+            }
+            if (unbound.length) {
+                warn("参考绑定", `<Subject ${unbound.join(", ")}> 没写明取自哪张参考图。`
+                                + `有 ${nPic} 张图时「图中的…」指哪张模型只能猜 —— `
+                                + "每个 Subject 都要写「取自 <Picture N>」");
+            }
+        }
+    }
+
     // ===== 锚点 =====
     const head = text.trim().split("\n")[0].trim();
     if (head.startsWith("For the target video")) {

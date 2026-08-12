@@ -217,6 +217,23 @@ def lint(text, name, seconds=None):
         if sec in sections and "\n" in sections[sec].strip():
             r.warn("换行", f"{sec} 段内有换行 —— 出片样本这一段从不换行")
 
+    # 每个 <Subject N> 的定义里必须出现至少一个 <Picture N>。有多张参考图时
+    # 写「图中的少女」模型不知道指哪一张，只能猜。官方六段式的写法是
+    # `<Subject 1> is ..., derived from <Picture 1>`，retention 里也给
+    # <Picture N> 单独列行说明它驱动了哪几项。
+    defs = sections.get("subject_definitions", "")
+    if defs:
+        n_pic = len(set(re.findall(r"<Picture\s+(\d+)>", defs)))
+        if n_pic > 1:
+            unbound = [m.group(1) for m in
+                       re.finditer(r"<Subject\s+(\d+)>(?:(?!<Subject\s+\d+>).)*", defs, re.S)
+                       if not re.search(r"<Picture\s+\d+>", m.group(0))]
+            if unbound:
+                r.warn("参考绑定",
+                       f"<Subject {', '.join(unbound)}> 没写明取自哪张参考图。"
+                       f"有 {n_pic} 张图时「图中的…」指哪张模型只能猜 —— "
+                       "每个 Subject 都要写「取自 <Picture N>」")
+
     # ===== 锚点 ===========================================================
     head = text.strip().split("\n")[0].strip()
     if head.startswith("For the target video"):

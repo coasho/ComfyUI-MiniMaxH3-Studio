@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 import { openModelManager, modelStatus } from "./h3_models.js";
 
 const NODE_CLASS = "MiniMaxH3Easy";
@@ -1188,6 +1189,7 @@ function attachLintStrip(node, wrap) {
     col.className = "h3-editor-col";
     col.style.cssText = "display:flex;flex-direction:column;height:100%;width:100%;min-height:0;";
     wrap.append(col);
+    console.log("[MiniMaxH3-Studio] 提示词校验条已挂载", { node: node?.id });
     if (editor) {
         col.append(editor);                 // 从 wrap 里挪进来
         editor.style.height = "auto";       // 盖掉样式表的 height:100%，否则挤没提示条
@@ -1230,19 +1232,37 @@ async function runLint(node) {
     }
     if (!prompt.trim()) {
         node.__h3LintData = null;
+        node.__h3LintError = null;
         renderLintStrip(node);
         return;
     }
+    // 必须走 api.fetchApi：ComfyUI 桌面端可能带 base path，裸 fetch("/…") 会打偏。
+    const opts = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, seconds: Number(getWidgetValue(node, "seconds", 5)) || null }),
+    };
     try {
-        // 包里其余地方都是裸 fetch（h3_models.js / h3_api.js），这里保持一致
-        const res = await fetch("/minimax_h3_studio/lint", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, seconds: Number(getWidgetValue(node, "seconds", 5)) || null }),
-        });
-        node.__h3LintData = res.ok ? await res.json() : null;
+        const send = (api && typeof api.fetchApi === "function")
+            ? api.fetchApi.bind(api)
+            : (p, o) => fetch(p, o);
+        let res = await send("/minimax_h3_studio/lint", opts);
+        if (!res.ok && typeof fetch === "function") {
+            // 兜底：有的部署下 fetchApi 会加 /api 前缀而路由挂在根上
+            res = await fetch("/minimax_h3_studio/lint", opts);
+        }
+        if (res.ok) {
+            node.__h3LintData = await res.json();
+            node.__h3LintError = null;
+        } else {
+            node.__h3LintData = null;
+            node.__h3LintError = res.status === 404 || res.status === 405
+                ? `校验接口不存在（HTTP ${res.status}）——ComfyUI 需要重启一次`
+                : `校验接口返回 HTTP ${res.status}`;
+        }
     } catch (err) {
         node.__h3LintData = null;
+        node.__h3LintError = `校验请求失败：${err?.message || err}`;
     }
     renderLintStrip(node);
 }
@@ -1251,13 +1271,20 @@ function renderLintStrip(node) {
     const strip = node.__h3LintStrip;
     if (!strip) return;
     const data = node.__h3LintData;
-    const rows = (data?.items || []).filter((i) => i.level !== "INFO");
-    if (!data || !rows.length) {
-        strip.style.display = data ? "block" : "none";
-        if (data) {
-            strip.style.color = "#4ec9a0";
-            strip.textContent = "✓ 结构校验通过";
-        }
+    // 出错也要显示。之前失败时静默隐藏，结果「看不到提示条」分不清是布局问题
+    // 还是请求没打通，白折腾了好几轮。
+    if (!data) {
+        strip.style.display = "block";
+        strip.style.color = node.__h3LintError ? "#e0b341" : "#8b93a0";
+        strip.textContent = node.__h3LintError || "结构校验：等待中…";
+        node.setDirtyCanvas?.(true, true);
+        return;
+    }
+    const rows = (data.items || []).filter((i) => i.level !== "INFO");
+    if (!rows.length) {
+        strip.style.display = "block";
+        strip.style.color = "#4ec9a0";
+        strip.textContent = "✓ 结构校验通过";
         node.setDirtyCanvas?.(true, true);
         return;
     }

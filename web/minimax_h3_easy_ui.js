@@ -1220,6 +1220,11 @@ function scheduleLint(node) {
     node.__h3LintTimer = setTimeout(() => runLint(node), LINT_DEBOUNCE_MS);
 }
 
+/** 防止同一份内容重复请求：内容没变就不重跑。 */
+function lintFingerprint(prompt, seconds) {
+    return `${seconds} ${prompt}`;
+}
+
 async function runLint(node) {
     const strip = node.__h3LintStrip;
     if (!strip) return;
@@ -1235,11 +1240,15 @@ async function runLint(node) {
         renderLintStrip(node);
         return;
     }
+    const seconds = Number(getWidgetValue(node, "seconds", 5)) || null;
+    const fp = lintFingerprint(prompt, seconds);
+    if (fp === node.__h3LintFingerprint && node.__h3LintData) return;   // 内容没变，别重复请求
+    node.__h3LintFingerprint = fp;
     // 必须走 api.fetchApi：ComfyUI 桌面端可能带 base path，裸 fetch("/…") 会打偏。
     const opts = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, seconds: Number(getWidgetValue(node, "seconds", 5)) || null }),
+        body: JSON.stringify({ prompt, seconds }),
     };
     try {
         const send = (api && typeof api.fetchApi === "function")
@@ -2052,6 +2061,7 @@ function renderEditorFromNode(node, force = false) {
     editor.textContent = "";
     if (!Array.isArray(doc?.parts)) {
         appendPromptTextWithDialogueBlocks(editor, String(widget.value || ""));
+        scheduleLint(node);
         return;
     }
     const live = mentionOptions(node);
@@ -2084,6 +2094,9 @@ function renderEditorFromNode(node, force = false) {
             unresolved: !option,
         }));
     }
+    // 「节点 -> 编辑器」方向：加载工作流、程序化 setValue、切模式、撤销重做
+    // 之后重绘。不挂这里的话，打开一个已存工作流看到的永远是上一次的结果。
+    scheduleLint(node);
 }
 
 function syncPromptFromEditor(node, markDirty = true) {
@@ -2105,6 +2118,10 @@ function syncPromptFromEditor(node, markDirty = true) {
     } finally {
         node.__h3EditorSyncing = false;
     }
+    // 所有「编辑器 -> 节点」的内容变更都汇到这里：打字、中文输入法上屏、
+    // 粘贴、撤销重做、插引用芯片、插台词块。只挂 input 事件会漏掉一大半
+    // （中文走 compositionend，根本不进 input 分支）。
+    scheduleLint(node);
 }
 
 function clonePromptDoc(doc) {
@@ -3808,6 +3825,17 @@ function installNode(nodeType, nodeData) {
         patchCanvas();
         installQuickCreateCapture(app.canvas);
         installPromptEditorSoon(this);
+        // 秒数会进校验（帧数、台词静默占比都按它算），改了得重跑。
+        // 用 onWidgetChanged 兜住所有 widget，省得逐个去挂。
+        if (!this.__h3LintWidgetHook) {
+            this.__h3LintWidgetHook = true;
+            const originalWidgetChanged = this.onWidgetChanged;
+            this.onWidgetChanged = function onWidgetChangedH3Lint(...args) {
+                const out = originalWidgetChanged?.apply(this, args);
+                scheduleLint(this);
+                return out;
+            };
+        }
         const modeWidget = getWidget(this, "mode");
         if (modeWidget) {
             const originalCallback = modeWidget.callback;

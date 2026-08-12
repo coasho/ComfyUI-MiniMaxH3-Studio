@@ -39,11 +39,14 @@ ALL_FIELDS = ["subject_definitions", "summary", "retention_analysis", "detailed_
 # （end 18 次 / final seconds 1 次）；六段式用显式定格；长文派用技术条款收尾。
 # 中文提示词用「最后一帧定格」「余摆…后停住」表达同一件事 —— 判据必须双语，
 # 否则中文提示词会被整片误报（实测一条正常的中文提示词误报了 3 条）。
+# ⚠️ 只认「片尾」专用的说法。中文的「定格一拍」「画面定格两帧」「余摆…后停住」
+# 是**镜头内**的定格，是作画技法，不是收尾装置 —— 早先把它们也算进来，
+# 一条正常的提示词被报成「收尾装置出现 3 次」。
 TAIL_DEVICES = [
     r"through the end", r"through the final \w+", r"through the last \w+",
-    r"freezes on", r"holds on", r"hold on (?:this|the)", r"final frame",
-    r"最后一帧", r"末帧", r"画面定格", r"定格(?:收束|结束|收尾)", r"余摆",
-    r"(?:轻轻|缓缓|慢慢)?(?:晃动|摆动)后停住", r"停住(?:后)?(?:收|结束)",
+    r"freezes on", r"holds on (?:this|the)", r"final frame",
+    r"最后一帧", r"末帧", r"最后(?:一格|一格画面)",
+    r"(?:结尾|片尾|最后)[^。；\n]{0,10}定格", r"定格(?:收束|收尾|结束)",
 ]
 
 CUT_WORDS = ("hard cut", "cuts to", "cut to", "cuts into", "smash-zoom", "whip-zoom",
@@ -139,13 +142,23 @@ def detect_school(fields):
     return "longform"
 
 
+# 时间戳可以写在 [镜头N] 前面（`在 00:02.500，[镜头2] …`，这是实测验证过、
+# 误差不到一帧的形式），也可以写在后面（`[Shot 2] At 00:02.200, …`）。
+# 切分时必须把**前置**的那个时间戳算进这一镜，否则它会落到上一镜的末尾，
+# 导致「Shot 1 带了时间戳」「只有 2 个带时间戳」这类完全错误的判断，
+# 连带把台词静默占比也算错。
+SHOT_START_RE = re.compile(
+    r"(?:(?:在|At)\s*\d{1,2}[:：]\d{2}(?:\.\d{1,3})?\s*[，,]?\s*)?"
+    r"\[(?:Shot|SHOT|镜头)\s*(\d+)\]"
+)
+
+
 def split_shots(body):
-    parts = re.split(r"(?=\[(?:Shot|SHOT|镜头)\s*\d+\])", body)
+    marks = [(m.start(), int(m.group(1))) for m in SHOT_START_RE.finditer(body)]
     out = []
-    for p in parts:
-        m = re.match(r"\[(?:Shot|SHOT|镜头)\s*(\d+)\]", p.strip())
-        if m:
-            out.append((int(m.group(1)), p.strip()))
+    for i, (start, num) in enumerate(marks):
+        end = marks[i + 1][0] if i + 1 < len(marks) else len(body)
+        out.append((num, body[start:end].strip()))
     return out
 
 
@@ -264,8 +277,13 @@ def lint(text, name, seconds=None):
     low_desc = desc.lower()
     n_cut = sum(low_desc.count(w) for w in CUT_WORDS)
     n_cont = sum(low_desc.count(w) for w in CONTINUITY)
-    if len(shots) > 1 and n_cut == 0:
-        r.warn("硬切", "多镜头但全篇没写切换方式（hard cut / cuts to / smash-zoom）")
+    # 只有基础三段式那派把 hard cut 当必需（70 次）。六段式/四段式用
+    # `At 00:01.000, …` / `在 00:02.500，[镜头2]` 声明切点就够了，官方样本
+    # 就是这么写的 —— 对它们要求 cut 词是误报。
+    if school == "base3" and len(shots) > 1 and n_cut == 0:
+        r.warn("硬切", "多镜头但全篇没写切换方式（hard cut / 硬切 / smash-zoom）")
+    elif len(shots) > 1 and n_cut == 0 and len(ts) < len(shots) - 1:
+        r.warn("切点", "多镜头，但既没写切换方式也没给每个镜头时间戳，切点无从确定")
     if len(shots) > 2 and n_cont == 0:
         r.warn("连续性", f"{len(shots)} 个镜头，全篇没有 keeps / still / back to —— "
                          f"硬切后不声明什么没变，就会出现画面断层")

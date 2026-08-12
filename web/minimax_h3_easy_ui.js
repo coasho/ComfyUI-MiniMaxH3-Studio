@@ -1201,15 +1201,14 @@ function attachLintStrip(node, wrap) {
     Object.assign(strip.style, {
         display: "none", font: "11px/1.5 ui-monospace,Consolas,monospace",
         padding: "3px 6px", marginTop: "3px", borderRadius: "4px",
-        background: "rgba(0,0,0,.22)", cursor: "pointer", userSelect: "none",
-        maxHeight: "120px", overflowY: "auto", flex: "0 0 auto",
+        background: "rgba(0,0,0,.22)", userSelect: "text",
+        maxHeight: "160px", overflowY: "auto", flex: "0 0 auto",
     });
+    // 要能选中复制，所以 user-select 必须是 text；但 pointerdown 仍要拦住，
+    // 否则按下就变成拖画布，根本选不了。
     strip.addEventListener("pointerdown", (e) => e.stopPropagation());
+    strip.addEventListener("mousedown", (e) => e.stopPropagation());
     strip.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
-    strip.addEventListener("click", () => {
-        node.__h3LintOpen = !node.__h3LintOpen;
-        renderLintStrip(node);
-    });
     col.append(strip);
     node.__h3LintStrip = strip;
     scheduleLint(node);
@@ -1290,25 +1289,73 @@ function renderLintStrip(node) {
     }
     strip.style.display = "block";
     strip.style.color = data.n_err ? "#e06c75" : "#e0b341";
-    const head = `${data.n_err ? "✗" : "!"} ${data.n_err} 错误 / ${data.n_warn} 警告`
-        + (node.__h3LintOpen ? "  ▾" : "  ▸ 点开");
-    if (!node.__h3LintOpen) {
-        strip.textContent = head;
-    } else {
-        strip.textContent = "";
-        const h = document.createElement("div");
-        h.textContent = head;
-        strip.append(h);
-        rows.sort((a, b) => (a.level === "ERROR" ? 0 : 1) - (b.level === "ERROR" ? 0 : 1));
+    rows.sort((a, b) => (a.level === "ERROR" ? 0 : 1) - (b.level === "ERROR" ? 0 : 1));
+    strip.textContent = "";
+
+    // 标题行：左边点开/收起，右边复制。整块正文可以直接选中复制。
+    const head = document.createElement("div");
+    Object.assign(head.style, { display: "flex", gap: "8px", alignItems: "center" });
+    const toggle = document.createElement("span");
+    toggle.style.cursor = "pointer";
+    toggle.style.userSelect = "none";
+    toggle.textContent = `${data.n_err ? "✗" : "!"} ${data.n_err} 错误 / ${data.n_warn} 警告`
+        + (node.__h3LintOpen ? "  ▾ 收起" : "  ▸ 点开");
+    toggle.addEventListener("click", () => {
+        node.__h3LintOpen = !node.__h3LintOpen;
+        renderLintStrip(node);
+    });
+    const copy = document.createElement("span");
+    Object.assign(copy.style, {
+        cursor: "pointer", userSelect: "none", marginLeft: "auto",
+        padding: "0 6px", borderRadius: "3px", background: "rgba(255,255,255,.10)",
+    });
+    copy.textContent = "复制";
+    copy.addEventListener("click", async () => {
+        const text = lintReportText(node, data, rows);
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (err) {
+            // 剪贴板 API 不可用时退回老办法
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.append(ta);
+            ta.select();
+            try { document.execCommand("copy"); } catch (e) { /* 没辙了 */ }
+            ta.remove();
+        }
+        copy.textContent = "已复制";
+        setTimeout(() => { copy.textContent = "复制"; }, 1200);
+    });
+    head.append(toggle, copy);
+    strip.append(head);
+
+    if (node.__h3LintOpen) {
         for (const it of rows) {
             const line = document.createElement("div");
             line.style.color = it.level === "ERROR" ? "#e06c75" : "#c9a227";
             line.style.marginTop = "2px";
-            line.textContent = `${it.level === "ERROR" ? "✗" : "!"} [${it.rule}] ${String(it.message).split("\n")[0]}`;
+            line.style.whiteSpace = "pre-wrap";
+            line.textContent = `${it.level === "ERROR" ? "✗" : "!"} [${it.rule}] ${it.message}`;
             strip.append(line);
         }
     }
     node.setDirtyCanvas?.(true, true);
+}
+
+/** 复制用的纯文本：完整信息，不截断，带上 INFO 行。 */
+function lintReportText(node, data, rows) {
+    const lines = [`H3 提示词结构校验：${data.n_err} 错误 / ${data.n_warn} 警告`];
+    for (const it of rows) {
+        lines.push(`${it.level === "ERROR" ? "✗" : "!"} [${it.rule}] ${it.message}`);
+    }
+    const info = (data.items || []).filter((i) => i.level === "INFO");
+    if (info.length) {
+        lines.push("");
+        for (const it of info) lines.push(`· [${it.rule}] ${it.message}`);
+    }
+    return lines.join("\n");
 }
 
 function buildRuntimePrompt(node, runtimeLinks) {

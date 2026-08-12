@@ -1,0 +1,381 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""H3 提示词结构校验。只查结构，不看题材。
+
+规则来自 docs/H3提示词写法完全指南.txt，阈值全部是从 22 条**实际出片**的提示词上量出来的。
+
+重要：这 22 条分属 4 个流派，规则**必须按流派分档**。
+把某一派的惯例当成通用 ERROR，就会把另外三派全判成不合格——
+第一版就犯了这个错，在 4 条已出片的提示词上误报了 7 个 ERROR。
+
+自检：
+    python h3_prompt_lint.py --selftest <金标准目录>
+必须 0 ERROR 才算规则正确。
+
+用法：
+    python h3_prompt_lint.py 提示词.txt
+    python h3_prompt_lint.py 提示词.txt --seconds 15
+    cat 提示词.txt | python h3_prompt_lint.py -
+    python h3_prompt_lint.py 目录/ --quiet
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import sys
+
+# ---------------------------------------------------------------- 常量
+
+ANCHOR_I2VA = ("For the target video, at 0.00 seconds into the target video, "
+               "<Picture 1> (from [Shot 1]) is fully referenced.")
+
+SCHOOLS = {
+    # 流派 -> (必需字段, 说明)
+    "base3": (["integrated_multimodal_description", "overall_soundscape", "non_diegetic_music"],
+              "基础三段式（Pixaroma 19 条同款）"),
+    "ref6": (["subject_definitions", "summary", "retention_analysis",
+              "detailed_description", "overall_soundscape", "non_diegetic_music"],
+             "官方 Ref2VA 六段式"),
+    "ref4": (["summary", "detailed_description", "overall_soundscape", "non_diegetic_music"],
+             "官方模板精简版（Subject 内联定义）"),
+    "longform": ([], "工程化长文（自定义段名 + [SHOT N]）"),
+}
+ALL_FIELDS = ["subject_definitions", "summary", "retention_analysis", "detailed_description",
+              "integrated_multimodal_description", "overall_soundscape", "non_diegetic_music"]
+
+# 「说完之后镜头还活着」的收尾装置。19/19 Pixaroma 有 through the <末尾>
+# （end 18 次 / final seconds 1 次）；六段式用显式定格；长文派用技术条款收尾。
+TAIL_DEVICES = [
+    r"through the end", r"through the final \w+", r"through the last \w+",
+    r"freezes on", r"holds on", r"hold on (?:this|the)", r"final frame",
+]
+
+CUT_WORDS = ("hard cut", "cuts to", "cut to", "cuts into", "smash-zoom", "whip-zoom",
+             "crash-zoom", "spiral whoosh", "camera cuts", "flash-cut", "whoosh-cut")
+CONTINUITY = ("keeps ", "still ", "back to", "without stopping", "again on",
+              "continues", "only progress", "never reset", "persists", "accumulate")
+
+FANCY_COLOURS = {"crimson", "azure", "emerald", "scarlet", "vermilion", "cerulean",
+                 "magenta", "turquoise", "ochre", "indigo", "burgundy", "maroon",
+                 "chartreuse", "mauve", "sapphire", "aquamarine", "fuchsia"}
+
+LANGS = ("English|Chinese|Japanese|Korean|Spanish|French|German|Italian|"
+         "Portuguese|Russian|Arabic|Thai|Vietnamese|Indonesian")
+
+FRAME_STEP, FRAME_PLUS = 17, 5
+
+
+def legal_length(seconds: float, fps: int = 24) -> int:
+    """H3 的 length 必须 ≡ 5 (mod 17)。官方模板用的就是这个式子。"""
+    n = max(5, round(seconds * fps))
+    return n + (FRAME_PLUS - (n % FRAME_STEP)) % FRAME_STEP
+
+
+# ---------------------------------------------------------------- 报告
+
+class Report:
+    def __init__(self, name):
+        self.name, self.items = name, []
+
+    def err(self, rule, msg):
+        self.items.append(("ERROR", rule, msg))
+
+    def warn(self, rule, msg):
+        self.items.append(("WARN", rule, msg))
+
+    def info(self, rule, msg):
+        self.items.append(("INFO", rule, msg))
+
+    @property
+    def n_err(self):
+        return sum(1 for lv, _, _ in self.items if lv == "ERROR")
+
+    @property
+    def n_warn(self):
+        return sum(1 for lv, _, _ in self.items if lv == "WARN")
+
+    def render(self, show_info=True):
+        rank = {"ERROR": 0, "WARN": 1, "INFO": 2}
+        mark = {"ERROR": "x", "WARN": "!", "INFO": "."}
+        rows = sorted((i for i in self.items if show_info or i[0] != "INFO"),
+                      key=lambda i: rank[i[0]])
+        out = [f"-- {self.name}"]
+        out += [f"   {mark[lv]} [{rule}] {msg}" for lv, rule, msg in rows] or ["   全部通过"]
+        out.append(f"   => {self.n_err} 错误 / {self.n_warn} 警告")
+        return "\n".join(out)
+
+
+# ---------------------------------------------------------------- 切分
+
+def split_sections(text):
+    """按已知字段名切段。只认行首（或全文开头）的字段名，避免正文里的顺带提及。"""
+    pat = "|".join(re.escape(n) for n in ALL_FIELDS)
+    marks = [(m.start(), m.end(), m.group(1))
+             for m in re.finditer(rf"({pat})\s*:?", text)
+             if m.start() == 0 or text[max(0, m.start() - 2):m.start()].endswith("\n")]
+    found = {}
+    for i, (s, e, nm) in enumerate(marks):
+        end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
+        found[nm] = text[e:end].strip()
+    return found, [m[2] for m in marks]
+
+
+def detect_school(fields):
+    if "subject_definitions" in fields and "retention_analysis" in fields:
+        return "ref6"
+    if "integrated_multimodal_description" in fields:
+        return "base3"
+    if "detailed_description" in fields:
+        return "ref4"
+    return "longform"
+
+
+def split_shots(body):
+    parts = re.split(r"(?=\[(?:Shot|SHOT|镜头)\s*\d+\])", body)
+    out = []
+    for p in parts:
+        m = re.match(r"\[(?:Shot|SHOT|镜头)\s*(\d+)\]", p.strip())
+        if m:
+            out.append((int(m.group(1)), p.strip()))
+    return out
+
+
+# ---------------------------------------------------------------- 检查
+
+def lint(text, name, seconds=None):
+    r = Report(name)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    n_chars = len(text)
+
+    # ===== 通用：不分流派，违反就是坏 =====================================
+    if "__MINIMAX_H3_REF_" in text:
+        r.err("占位符", "含 __MINIMAX_H3_REF_N__ —— 只有参考模式后端解析它，"
+                        "图生模式原样送进模型，首帧引用直接失效")
+    for bad in ("〈Picture", "＜Picture", "<图片", "〈Audio", "＜Audio", "<视频"):
+        if bad in text:
+            r.err("标签", f"出现 {bad!r} —— <Picture N>/<Audio N>/<Video N> 由 tokenizer 硬编码拼接，必须半角英文")
+
+    if n_chars > 7000:
+        r.err("长度", f"{n_chars} 字符 —— H3 提示词硬上限 7000")
+
+    d_open, d_close = text.count("<d>"), text.count("</d>")
+    if d_open != d_close:
+        r.err("台词", f"<d> {d_open} 个 / </d> {d_close} 个，不配对")
+    for m in re.finditer(r"<d>\s*([^<]*)", text):
+        if not re.match(rf"\[({LANGS})\]", m.group(1).strip()):
+            r.err("台词", f"<d> 后缺语言标签：{m.group(1)[:40]!r}")
+
+    # ===== 流派判定 =======================================================
+    sections, order = split_sections(text)
+    school = detect_school(sections)
+    need, label = SCHOOLS[school]
+    r.info("流派", f"{school} —— {label}")
+
+    missing = [s for s in need if s not in sections]
+    if missing:
+        r.err("分段", f"缺字段：{', '.join(missing)}")
+    if order:
+        expect = [s for s in need if s in order]
+        if expect and order != expect:
+            r.err("分段", f"字段顺序不对：实际 {order}，应为 {need}")
+
+    # 段内换行：Pixaroma 那派一个都没有；官方模板和六段式会在镜头之间空行，那是正常的。
+    for sec in ("integrated_multimodal_description", "overall_soundscape", "non_diegetic_music"):
+        if sec in sections and "\n" in sections[sec].strip():
+            r.warn("换行", f"{sec} 段内有换行 —— 出片样本这一段从不换行")
+
+    # ===== 锚点 ===========================================================
+    head = text.strip().split("\n")[0].strip()
+    if head.startswith("For the target video"):
+        if head != ANCHOR_I2VA:
+            r.err("锚点", f"I2VA 锚点不是一字不差那句。\n       实际：{head}\n       应为：{ANCHOR_I2VA}")
+        else:
+            r.info("锚点", "I2VA 锚点逐字匹配")
+    elif head.startswith("How the reference"):
+        if "0.00-second mark" not in head:
+            r.warn("锚点", "Ref2VA 对齐句里没有 0.00-second mark")
+        r.info("锚点", "Ref2VA 对齐句")
+    elif school != "longform":
+        r.warn("锚点", "没有首行对齐句。I2VA / FL2VA / L2VA 必须有，纯 T2VA 可以没有")
+
+    # ===== 镜头 ===========================================================
+    desc = (sections.get("integrated_multimodal_description")
+            or sections.get("detailed_description") or text)
+    shots = split_shots(desc)
+    if not shots:
+        r.err("镜头", "找不到 [Shot N] / [SHOT N] 标记")
+        return r
+
+    nums = [n for n, _ in shots]
+    if nums != list(range(1, len(nums) + 1)):
+        r.err("镜头", f"镜头编号不连续：{nums}")
+    r.info("镜头", f"{len(shots)} 个镜头")
+
+    ts = []
+    for i, (num, body) in enumerate(shots):
+        m = re.search(r"At\s+(\d{2}):(\d{2}\.\d{1,3})", body)
+        if i == 0 and m:
+            r.warn("时间戳", "Shot 1 带了时间戳 —— 出片样本 Shot 1 一律不带")
+        if m:
+            ts.append((num, int(m.group(1)) * 60 + float(m.group(2))))
+    for i in range(1, len(ts)):
+        if ts[i][1] <= ts[i - 1][1]:
+            r.err("时间戳", f"Shot {ts[i][0]} 的 {ts[i][1]}s 不晚于 Shot {ts[i-1][0]} 的 {ts[i-1][1]}s")
+    if school in ("base3", "ref6", "ref4") and len(shots) > 1 and len(ts) < len(shots) - 1:
+        r.warn("时间戳", f"{len(shots)-1} 个非首镜头里只有 {len(ts)} 个带 At 00:SS.mmm")
+
+    # 硬切 / 连续性：整篇聚合，不逐镜头刷屏
+    low_desc = desc.lower()
+    n_cut = sum(low_desc.count(w) for w in CUT_WORDS)
+    n_cont = sum(low_desc.count(w) for w in CONTINUITY)
+    if len(shots) > 1 and n_cut == 0:
+        r.warn("硬切", "多镜头但全篇没写切换方式（hard cut / cuts to / smash-zoom）")
+    if len(shots) > 2 and n_cont == 0:
+        r.warn("连续性", f"{len(shots)} 个镜头，全篇没有 keeps / still / back to —— "
+                         f"硬切后不声明什么没变，就会出现画面断层")
+    else:
+        r.info("连续性", f"切换 {n_cut} 处，连续性声明 {n_cont} 处")
+
+    # 收尾装置
+    # 19/19 的基础三段式都有；官方模板（ref4）那条就没有，所以只在 base3 判 ERROR。
+    tail_hits = [m.group(0) for p in TAIL_DEVICES for m in re.finditer(p, text, re.I)]
+    if not tail_hits:
+        msg = ("没有收尾装置（through the end / through the final seconds / freezes on …）"
+               " —— 治片尾冻结。基础三段式 19/19 都有；官方模板那条没有，所以其它流派只是提醒")
+        (r.err if school == "base3" else r.warn)("片尾", msg)
+    else:
+        in_last = any(re.search(p, shots[-1][1], re.I) for p in TAIL_DEVICES)
+        if not in_last:
+            r.warn("片尾", f"收尾装置 {tail_hits} 不在最后一个镜头里")
+        if len(tail_hits) > 2:
+            r.warn("片尾", f"收尾装置出现 {len(tail_hits)} 次 —— 样本通常只有 1 次")
+
+    # 预算
+    lens = [len(b) for _, b in shots]
+    mid = sorted(lens[1:])[len(lens[1:]) // 2] if len(lens) > 1 else 0
+    r.info("预算", f"Shot 1 {lens[0]} 字符 / 其余中位 {mid} / 全文 {n_chars}")
+    if mid and lens[0] < mid * 1.25:
+        r.warn("预算", f"Shot 1 只有 {lens[0]} 字符、后续中位 {mid} —— "
+                       f"出片样本 Shot 1 约为后续的 2 倍（完整外貌+场景+待机层都在这一镜）")
+    for (num, _), L in zip(shots, lens):
+        if L > 1200:
+            r.warn("预算", f"Shot {num} 有 {L} 字符，偏长，容易稀释身份锚点")
+
+    # ===== 只对「场景描写」生效的规则 =====================================
+    # retention_analysis / summary 是写给模型看的元描述，用 but 是正常的。
+    scene = desc
+    for word, lv in (("but", "warn"), ("before", "warn"), ("however", "warn")):
+        n = len(re.findall(rf"\b{word}\b", scene, re.I))
+        if n:
+            (r.err if lv == "err" else r.warn)(
+                "连接词",
+                f"场景描写里 {word} 出现 {n} 次 —— Pixaroma 19 条里 but/before 都是 0。"
+                f"转折应写成 A→B 的表情转换（expression flips from X into Y）")
+
+    if school == "base3":   # Pixaroma 那一派的专属纪律
+        if not re.search(r"\bonly\b", scene, re.I):
+            r.warn("构图", "一个 only 都没有 —— 样本 61 次，放在被摄对象后面 = 这个框里别出别的")
+        n_count = len(re.findall(r"\b(one|single|two|three|both|each|every)\b", scene, re.I))
+        if n_count < len(shots):
+            r.warn("数量词", f"数量词 {n_count} 个 / {len(shots)} 个镜头 —— "
+                             f"one/single/only 是压多手多物的主要手段")
+
+    fancy = sorted({w.lower() for w in re.findall(r"\b[A-Za-z]+\b", scene)} & FANCY_COLOURS)
+    if fancy:
+        r.warn("颜色", f"文学化色彩词 {fancy} —— 出片样本只用 9 个基础色词，且永远贴着名词写")
+
+    n_ly = len(re.findall(r"\b[a-z]{4,}ly\b", scene))
+    if n_ly > len(shots) * 4:
+        r.warn("副词", f"{n_ly} 个 -ly 副词 —— 强度靠动词本身（slams / whips），不靠副词")
+
+    n_neg = len(re.findall(r"\bNo [A-Za-z]", scene))
+    if n_neg > 6:
+        r.warn("否定句", f"{n_neg} 处 No … —— 19 条里 16 条是 0 次。"
+                         f"否定式声音描述会把那个概念塞进条件（片头人声）")
+
+    snd_words = (r"\b(sound|audio|noise|crackle|rustle|creak|gasp|moan|scream|"
+                 r"whisper|echo|thud|bang|squelch)\b")
+    n_snd = len(re.findall(snd_words, scene, re.I))
+    if n_snd > len(shots) * 2:
+        r.warn("分工", f"画面段里有 {n_snd} 个听觉词 —— 画面段只写看得见的，"
+                       f"呼吸写成胸口起伏和嘴唇形状，听觉全放 overall_soundscape")
+
+    # ===== 音景 / 音乐 ====================================================
+    snd = sections.get("overall_soundscape", "")
+    if snd:
+        if not re.search(r"room tone|ambien|background hum|底噪", snd, re.I):
+            r.warn("音景", "第一句不是持续底噪（room tone / ambience）—— 19/19 样本都是")
+        if not re.search(r"under the whole scene|throughout|全程", snd, re.I):
+            r.warn("音景", "底噪没写 under the whole scene / throughout")
+        if not 250 <= len(snd) <= 900:
+            r.warn("音景", f"{len(snd)} 字符 —— 样本 358~662")
+    if school != "longform" and not sections.get("non_diegetic_music"):
+        r.err("音乐", "缺 non_diegetic_music —— 不配乐就写 N/A")
+
+    # ===== 时长与帧数 =====================================================
+    if seconds is None:
+        m = re.search(r"(\d+(?:\.\d+)?)\s*(?:seconds?|秒)\b", text)
+        if m:
+            seconds = float(m.group(1))
+    if seconds:
+        if not 4 <= seconds <= 15:
+            r.err("时长", f"{seconds}s 超出 H3 的 4~15 秒硬限制")
+        r.info("帧数", f"{seconds}s → length 填 {legal_length(seconds)}"
+                       f"（≡5 mod 17），不是 {round(seconds * 24)}")
+        if ts:
+            last = max(t for _, t in ts)
+            if last >= seconds:
+                r.err("时间戳", f"最后一个切点 {last}s 不早于总时长 {seconds}s")
+            elif seconds - last < 0.8:
+                r.warn("时间戳", f"末镜头只有 {seconds-last:.2f}s —— 样本末镜头 3~4s")
+
+    return r
+
+
+# ---------------------------------------------------------------- 入口
+
+def collect(path):
+    if path == "-":
+        return [("<stdin>", sys.stdin.read())]
+    if os.path.isdir(path):
+        return [(fn, open(os.path.join(path, fn), encoding="utf-8").read())
+                for fn in sorted(os.listdir(path)) if fn.lower().endswith((".txt", ".md"))]
+    return [(os.path.basename(path), open(path, encoding="utf-8").read())]
+
+
+def main():
+    ap = argparse.ArgumentParser(description="H3 提示词结构校验（只查结构，不看题材）")
+    ap.add_argument("path", help="提示词文件、目录，或 - 从 stdin 读")
+    ap.add_argument("--seconds", type=float, default=None, help="目标时长，用于帧数与末镜头检查")
+    ap.add_argument("--quiet", action="store_true", help="只输出有问题的")
+    ap.add_argument("--no-info", action="store_true", help="不显示 INFO")
+    ap.add_argument("--selftest", action="store_true",
+                    help="金标准自检：目录里全是已出片的提示词，出现任何 ERROR 即判定规则写错")
+    a = ap.parse_args()
+
+    jobs = collect(a.path)
+    worst, n_err_files = 0, []
+    for name, text in jobs:
+        rep = lint(text, name, a.seconds)
+        if rep.n_err:
+            n_err_files.append(name)
+        if not (a.quiet and rep.n_err == 0 and rep.n_warn == 0):
+            print(rep.render(show_info=not a.no_info))
+            print()
+        worst = max(worst, 1 if rep.n_err else 0)
+
+    if a.selftest:
+        print("=" * 60)
+        if n_err_files:
+            print(f"自检未通过：{len(n_err_files)}/{len(jobs)} 条已出片的提示词被判 ERROR")
+            print("  " + ", ".join(n_err_files))
+            print("  这些是规则写错了，不是提示词写错了。")
+            sys.exit(1)
+        print(f"自检通过：{len(jobs)} 条已出片的提示词全部 0 ERROR")
+        sys.exit(0)
+    sys.exit(worst)
+
+
+if __name__ == "__main__":
+    main()

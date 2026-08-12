@@ -16,7 +16,7 @@ MiniMax H3 提示词写法完全指南
 
 ==============================================================================
 第 1 部分 / 共 5 部分   ——   主文件 —— 索引与速查
-来源：h3-prompt-practical/SKILL.md   （9487 字符）
+来源：h3-prompt-practical/SKILL.md   （9543 字符）
 ==============================================================================
 
 ---
@@ -257,7 +257,7 @@ Ref2VA 里另有官方机制：把画风单独声明成一个 `<Subject N>`（�
 | **数量词钉死** | `one single high ponytail only not twintails` · `one gloved hand` | `one` 62 · `single` 41 —— 压多手多物 |
 | **跨切声明连续** | `keeps <动词ing>` · `still <状态>` · `hard cut back to <之前的机位>` | 治画面断层 |
 | **视线每镜交代** | `red eyes locked on X` | `locked on` 20 次 |
-| **末镜头收 `through the end`** | `candlelight flickering across X through the end.` | **19/19，每条一次，全在最后一镜** —— 治片尾冻结 |
+| **末镜头收 `through the <末尾词>`** | `candlelight flickering across X through the end.` | 基础三段式 **19/19，每条一次，全在最后一镜**（`end` 18 · `final seconds` 1）—— 治片尾冻结。六段式改用显式定格，官方模板那条没有 |
 | **待机层单独声明** | `Both already breathing, hair strands drifting, torch flames flickering on stone.` | 不用定格/关键姿势那套的原因 |
 | **次级运动绑节拍** | `ponytail whips with each No` · `stutter-zoom punches on every syllable` | 统一句式 `<效果> on every <节拍>` |
 | **画面段不写声音** | 呼吸只写胸口起伏和嘴唇形状 | 声音词 画面段 19 vs 音景段 89 |
@@ -300,7 +300,7 @@ Ref2VA 里另有官方机制：把画风单独声明成一个 `<Subject N>`（�
 
 ==============================================================================
 第 2 部分 / 共 5 部分   ——   拆解 19 条稳定出片的提示词
-来源：h3-prompt-practical/references/reference-19-prompts.md   （18525 字符）
+来源：h3-prompt-practical/references/reference-19-prompts.md   （18845 字符）
 ==============================================================================
 
 # 拆解：19 条实际出片的提示词
@@ -476,6 +476,13 @@ candlelight strobing on wet naked skin through the end
 ```
 
 句式：`<光源> flickering/strobing across|on <对象> through the end.`
+
+⚠️ 精确说是 `through the <末尾词>`：**18 条用 `end`，1 条（P14）用 `final seconds`**
+（`the camera pushes in on her face through the final seconds`）。查的时候别只查 `end`。
+
+**这不是跨流派通用的**：官方模板那条（参考1）完全没有收尾装置，六段式那条用的是显式定格
+（`The video freezes on this image of utter, unhappy shock.`）。所以它是基础三段式这一派的
+硬规律，不是 H3 的普遍要求。
 
 作用是**防止片尾定住**。片尾冻结在 H3 上是常见失败，这一句把光影的动画延续到最后一帧。
 
@@ -867,7 +874,7 @@ startled face still locked on Olga as torchlight flickers along the stone walls 
 | `Static Shot` / `hard cut` | 53 / 70 |
 | 分词小句 | 平均 10.4 条/篇 |
 | 破折号 | 67 次（3.5 次/篇） |
-| `through the end` | **19/19，每条一次，全在最后一个镜头** |
+| `through the <末尾词>` | **19/19，每条一次，全在最后一个镜头**（`end` 18 · `final seconds` 1）|
 | `room tone` 开头 | 19/19 |
 | `non_diegetic_music` | **19/19 全是 `N/A`** |
 | `overall_soundscape` | 358 / 453 / 662 字符，一整段 |

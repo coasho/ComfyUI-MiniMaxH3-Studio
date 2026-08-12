@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
-import { api } from "../../scripts/api.js";
 import { openModelManager, modelStatus } from "./h3_models.js";
+import { lintPrompt } from "./h3_lint.js";
 
 const NODE_CLASS = "MiniMaxH3Easy";
 const LOADER_CLASS = "MiniMaxH3EasyLoader";
@@ -1225,7 +1225,7 @@ function lintFingerprint(prompt, seconds) {
     return `${seconds} ${prompt}`;
 }
 
-async function runLint(node) {
+function runLint(node) {
     const strip = node.__h3LintStrip;
     if (!strip) return;
     let prompt = "";
@@ -1237,40 +1237,21 @@ async function runLint(node) {
     if (!prompt.trim()) {
         node.__h3LintData = null;
         node.__h3LintError = null;
+        node.__h3LintFingerprint = null;
         renderLintStrip(node);
         return;
     }
     const seconds = Number(getWidgetValue(node, "seconds", 5)) || null;
     const fp = lintFingerprint(prompt, seconds);
-    if (fp === node.__h3LintFingerprint && node.__h3LintData) return;   // 内容没变，别重复请求
+    if (fp === node.__h3LintFingerprint && node.__h3LintData) return;
     node.__h3LintFingerprint = fp;
-    // 必须走 api.fetchApi：ComfyUI 桌面端可能带 base path，裸 fetch("/…") 会打偏。
-    const opts = {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, seconds }),
-    };
+    // 纯前端算，不发请求。改判据只要 Ctrl+R，不用重启 ComfyUI。
     try {
-        const send = (api && typeof api.fetchApi === "function")
-            ? api.fetchApi.bind(api)
-            : (p, o) => fetch(p, o);
-        let res = await send("/minimax_h3_studio/lint", opts);
-        if (!res.ok && typeof fetch === "function") {
-            // 兜底：有的部署下 fetchApi 会加 /api 前缀而路由挂在根上
-            res = await fetch("/minimax_h3_studio/lint", opts);
-        }
-        if (res.ok) {
-            node.__h3LintData = await res.json();
-            node.__h3LintError = null;
-        } else {
-            node.__h3LintData = null;
-            node.__h3LintError = res.status === 404 || res.status === 405
-                ? `校验接口不存在（HTTP ${res.status}）——ComfyUI 需要重启一次`
-                : `校验接口返回 HTTP ${res.status}`;
-        }
+        node.__h3LintData = lintPrompt(prompt, seconds);
+        node.__h3LintError = null;
     } catch (err) {
         node.__h3LintData = null;
-        node.__h3LintError = `校验请求失败：${err?.message || err}`;
+        node.__h3LintError = "校验出错：" + (err?.message || err);
     }
     renderLintStrip(node);
 }

@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""H3 提示词结构校验（包内模块）。只查结构，不看题材。
+"""H3 提示词结构校验 —— 命令行 / 生成时控制台用。
+
+界面上的实时校验走的是 web/h3_lint.js（纯前端，改判据只要 Ctrl+R）。
+这一份保留是为了批量跑金标准自检（22 条已出片提示词必须 0 ERROR）
+和生成时在控制台查解析后的提示词。两边判据要同步改。
 
 规则来自 docs/H3提示词写法完全指南.txt，阈值全部是从 22 条**实际出片**的提示词上量出来的。
 
@@ -475,27 +479,3 @@ def log_check(prompt: str, length: int | None = None, fps: int = 24, where: str 
             print(f"    {mark[lv]} [{rule}] {first}")
     except Exception:          # 校验永远不该拖垮生成
         pass
-
-
-def register_routes():
-    try:
-        from server import PromptServer
-    except Exception:
-        return
-    routes = getattr(PromptServer.instance, "routes", None)
-    if routes is None:
-        return
-    from aiohttp import web
-
-    @routes.post("/minimax_h3_studio/lint")
-    async def _lint(request):
-        try:
-            data = await request.json()
-        except Exception:
-            data = {}
-        seconds = data.get("seconds")
-        try:
-            seconds = float(seconds) if seconds not in (None, "") else None
-        except Exception:
-            seconds = None
-        return web.json_response(check(data.get("prompt") or "", seconds))

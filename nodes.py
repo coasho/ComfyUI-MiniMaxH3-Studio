@@ -166,7 +166,9 @@ def _filesystem_weight_names(categories: tuple[str, ...]) -> list[str]:
     return names
 
 
-@lru_cache(maxsize=16)
+# 不能缓存：缓存住就意味着 ComfyUI 运行期间下载的模型永远不出现在下拉框里，
+# 必须重启才看得到——而下载入口就在我们自己的节点包里。
+# 实测走一遍 diffusion_models/unet/vae/text_encoders/clip 只要 0.5 毫秒，缓存不值这个代价。
 def _collect_weight_names(categories: tuple[str, ...]) -> list[str]:
     names: list[str] = []
     seen: set[str] = set()

@@ -110,6 +110,8 @@ def wd14_dir() -> str:
 
 HF = "Comfy-Org/MiniMax-H3"
 LORA_REPO = "drbaph/MiniMax-H3-Turbo-Lora-ComfyUI"
+HERETIC_TE = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
+KIJAI_H3 = "Kijai/MiniMax-H3-experimental"
 
 MANIFEST: list[dict] = [
     {
@@ -144,6 +146,28 @@ MANIFEST: list[dict] = [
         "files": [{"repo": HF, "path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
                    "dest": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
                    "size": 15687142551}],
+    },
+    {
+        "id": "h3_text_encoder_heretic",
+        "label": "H3 文本编码器 · Heretic 去审版（nvfp4）",
+        "label_en": "H3 text encoder — Heretic uncensored (nvfp4)",
+        "group": "核心",
+        "required": False,
+        "note": "社区去审版，和官方 nvfp4 二选一。同样需要 50 系（sm_120）。",
+        "files": [{"repo": HERETIC_TE, "path": "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors",
+                   "dest": "text_encoders/qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors",
+                   "size": 15683129587}],
+    },
+    {
+        "id": "h3_video_vae_int8",
+        "label": "H3 视频 VAE · int8 convrot（约快 1.5 倍）",
+        "label_en": "H3 video VAE — int8 convrot (~1.5x faster)",
+        "group": "核心",
+        "required": False,
+        "note": "Kijai 的实验版，替代官方 fp16 视频 VAE。音频 VAE 不受影响。",
+        "files": [{"repo": KIJAI_H3, "path": "minimax_h3_video_vae_int8_convrot.safetensors",
+                   "dest": "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+                   "size": 3171670912}],
     },
     {
         "id": "h3_text_encoder_int8",

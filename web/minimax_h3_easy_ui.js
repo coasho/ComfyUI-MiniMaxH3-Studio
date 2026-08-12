@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { openModelManager, modelStatus } from "./h3_models.js";
 import { lintPrompt } from "./h3_lint.js";
+import { TEMPLATE_BASE3, TEMPLATE_REF6, TEMPLATE_HINTS } from "./h3_templates.js";
 
 const NODE_CLASS = "MiniMaxH3Easy";
 const LOADER_CLASS = "MiniMaxH3EasyLoader";
@@ -1212,6 +1213,44 @@ function attachLintStrip(node, wrap) {
     col.append(strip);
     node.__h3LintStrip = strip;
     scheduleLint(node);
+}
+
+// ---------------------------------------------------------------- 模板按钮
+
+/**
+ * 把模板灌进提示词编辑器。
+ *
+ * 直接改 widget 值不够——编辑器渲染的是 properties 里的 prompt doc。
+ * 清掉 doc 之后 renderEditorFromNode 会走 appendPromptTextWithDialogueBlocks
+ * 的兜底分支，顺便把 <d>…</d> 解析成台词块。
+ */
+function applyTemplate(node, text, label) {
+    const widget = getWidget(node, "prompt");
+    if (!widget) return;
+    const current = String(widget.value || "").trim();
+    if (current && !confirm(`当前提示词会被「${label}」覆盖，继续？\n\n（覆盖前建议先复制一份）`)) return;
+    widget.value = text;
+    if (widget._state) widget._state.value = text;
+    node.properties ||= {};
+    delete node.properties[PROMPT_DOC_PROP];
+    renderEditorFromNode(node, true);
+    syncPromptFromEditor(node);
+    node.setDirtyCanvas?.(true, true);
+    console.log(`[MiniMaxH3-Studio] 已插入${label}。写的时候注意：\n  · `
+        + TEMPLATE_HINTS.join("\n  · "));
+}
+
+function installTemplateButtons(node) {
+    if (node.__h3TemplateBtns) return;
+    node.__h3TemplateBtns = true;
+    for (const [label, text, tip] of [
+        ["📄 三段式模板", TEMPLATE_BASE3, "多张分角度参考图，或完全没有参考图"],
+        ["📑 六段式模板", TEMPLATE_REF6, "只有一张设定集"],
+    ]) {
+        const w = node.addWidget("button", label, null, () => applyTemplate(node, text, label));
+        w.serialize = false;
+        w.tooltip = tip;
+    }
 }
 
 function scheduleLint(node) {
@@ -3833,6 +3872,7 @@ function installNode(nodeType, nodeData) {
         patchCanvas();
         installQuickCreateCapture(app.canvas);
         installPromptEditorSoon(this);
+        installTemplateButtons(this);
         // 秒数会进校验（帧数、台词静默占比都按它算），改了得重跑。
         // 用 onWidgetChanged 兜住所有 widget，省得逐个去挂。
         if (!this.__h3LintWidgetHook) {
